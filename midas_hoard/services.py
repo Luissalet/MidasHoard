@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import time
 from datetime import datetime, timezone
@@ -76,7 +77,7 @@ class Services:
         offline = config.offline or self.db.get_setting("offline", "0") == "1"
         self.http = HttpClient(config.cache_dir, timeout=config.http_timeout_s, ttl=config.cache_ttl_s, offline=offline,
                                transport=http_transport, sleep=sleep_fn, clock=clock_fn)
-        self.providers = Registry(self.http, coingecko={"clock": clock_fn, "sleep": sleep_fn})
+        self.providers = Registry(self.http, keys=self._provider_key, coingecko={"clock": clock_fn, "sleep": sleep_fn})
         self.store = SnapshotStore(self.db, config.snapshots_dir, clock_fn)
         if link is not None:
             self.link_sync = link  # test double, already "sync-shaped"
@@ -91,6 +92,24 @@ class Services:
         self.committee = Committee(self.db, self.theses, self.store, self.link_sync, clock_fn)
         self.portfolios = Portfolios(self.db, self.store, clock_fn)
         self.seed_symbols()
+
+    # ------------------------------------------------------------ secrets
+    def _provider_key(self, provider_id: str) -> str:
+        """API key for a keyed provider: the environment wins, then the write-only value saved from Settings."""
+        env = os.environ.get(f"MIDAS_{provider_id.upper()}_KEY", "").strip()
+        return env or (self.db.get_setting(f"secret.{provider_id}", "") or "").strip()
+
+    def _keys_status(self) -> dict[str, Any]:
+        """Never the value: only whether a key exists, where it comes from and its last four characters."""
+        out = {}
+        for p in self.providers.all():
+            if not p.needs_key:
+                continue
+            key = self._provider_key(p.id)
+            env = bool(os.environ.get(f"MIDAS_{p.id.upper()}_KEY", "").strip())
+            out[p.id] = {"configured": bool(key), "last4": key[-4:] if len(key) >= 8 else ("" if not key else "****"),
+                         "source": "env" if env else ("settings" if key else "")}
+        return out
 
     # -------------------------------------------------------------- events
     def _emit(self, type_: str, data: dict[str, Any]) -> None:
@@ -162,7 +181,7 @@ class Services:
                     except MidasError as error:
                         notes.append(f"{p.id}: {error.message}")
         return {"query": query, "results": found[:limit], "count": len(found[:limit]), "notes": notes,
-                "hint": "market_fetch(provider, symbol) stores a snapshot; symbol syntax: stooq aapl.us / ^spx / eurusd, fred CPIAUCSL, ecb EXR/D.USD.EUR.SP00.A, coingecko bitcoin:eur."}
+                "hint": "market_fetch(provider, symbol) stores a snapshot; symbol syntax: yahoo AAPL / ^GSPC / EURUSD=X, fred CPIAUCSL, ecb EXR/D.USD.EUR.SP00.A, coingecko bitcoin:eur."}
 
     # --------------------------------------------------------------- market
     def fetch_raw(self, provider: str, symbol: str, start: Optional[str], end: Optional[str], interval: str = "d",
@@ -281,7 +300,8 @@ class Services:
             except (OSError, ValueError):
                 backend = {}
         return {"backend": backend, "language": self.db.get_setting("language", "es"), "offline": self.http.offline,
-                "cache": self.http.cache_stats(), "data_dir": str(self.config.data_dir)}
+                "cache": self.http.cache_stats(), "data_dir": str(self.config.data_dir),
+                "keys": self._keys_status()}
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         if patch.get("backend") is not None:
@@ -291,6 +311,14 @@ class Services:
         if "offline" in patch:
             self.http.offline = bool(patch["offline"])
             self.db.set_setting("offline", "1" if patch["offline"] else "0")
+        for pid, value in (patch.get("keys") or {}).items():
+            prov = self.providers.get(pid)
+            if not prov.needs_key:
+                raise MidasError("invalid_request", f"{prov.id} does not use an API key.", "Only keyed providers accept one.")
+            value = (value or "").strip()
+            if value and (len(value) > 200 or any(c.isspace() for c in value)):
+                raise MidasError("invalid_request", "That does not look like an API key.", "Paste the key only, without spaces.")
+            self.db.set_setting(f"secret.{prov.id}", value)
         if patch.get("clear_cache"):
             self.http.clear_cache()
         return self.get_settings()

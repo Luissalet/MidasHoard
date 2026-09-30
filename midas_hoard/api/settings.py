@@ -17,6 +17,7 @@ class SettingsBody(BaseModel):
     language: Optional[str] = None
     offline: Optional[bool] = None
     clear_cache: Optional[bool] = None
+    keys: Optional[dict[str, str]] = None  # write-only: provider id -> key (empty string removes it)
 
 
 @router.get("/settings")
