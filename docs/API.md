@@ -41,7 +41,7 @@ Deletes are `action: "delete"` with `confirm: true` on the owning tool (`thesis_
 
 ### `midas_status`
 
-Health: providers, data counts, models, disk. _read-only._
+Health: providers, data counts, models, disk. The model resolution is cached for 60 s and probed off-thread; while the first probe runs it reports `{"state": "probing"}`. _read-only._
 
 ### `market_providers`
 

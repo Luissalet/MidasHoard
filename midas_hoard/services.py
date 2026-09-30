@@ -25,6 +25,7 @@ from .errors import MidasError
 from .hoard_link.config import LinkConfig
 from .lab import Lab
 from .portfolio import Portfolios
+from .modelprobe import ModelProbe
 from .providers import HttpClient, Registry
 from .providers.base import FetchResult
 from .snapshots import Snapshot, SnapshotStore, provenance
@@ -87,9 +88,10 @@ class Services:
             link_config = LinkConfig.load(config.backend_json_path if config.backend_json_path.is_file() else None, app="midas")
             self._link = Link(link_config)
             self.link_sync = self._link.sync
+        self.model_probe = ModelProbe(lambda: self.link_sync.status())
         self.theses = Theses(self.db, self.store, fetch=self._fetch_for_thesis, catalogue=self.catalogue_lookup, emit=self._emit, clock=clock_fn)
         self.lab = Lab(self.db, self.store, config.runs_dir, emit=self._emit, clock=clock_fn)
-        self.committee = Committee(self.db, self.theses, self.store, self.link_sync, clock_fn)
+        self.committee = Committee(self.db, self.theses, self.store, self.link_sync, clock_fn, model_gate=self.model_probe.llm_block)
         self.portfolios = Portfolios(self.db, self.store, clock_fn)
         self.seed_symbols()
 
@@ -124,6 +126,7 @@ class Services:
         pass
 
     def stop(self) -> None:
+        self.model_probe.close()
         self.http.close()
         if self._link is not None:
             try:
@@ -331,10 +334,7 @@ class Services:
 
     def status(self) -> dict[str, Any]:
         """The full picture, including the (network-probing, ~seconds) model resolution."""
-        try:
-            link_status = self.link_sync.status()
-        except Exception as error:  # noqa: BLE001
-            link_status = {"error": str(error)}
+        link_status = self.model_probe.get(0.8)  # cached 60 s, probed off-thread: {"state": "probing"} while unknown
 
         def size(path: Path) -> int:
             return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.is_dir() else 0

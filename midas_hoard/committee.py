@@ -128,10 +128,16 @@ def _parse_json(text: str) -> Optional[Any]:
 
 
 class Committee:
-    def __init__(self, db: Database, theses: Theses, store: SnapshotStore, link: Any, clock: Callable[[], float] = time.time):
+    def __init__(self, db: Database, theses: Theses, store: SnapshotStore, link: Any, clock: Callable[[], float] = time.time,
+                 model_gate: Optional[Callable[[], str]] = None):
         self.db, self.theses, self.store, self.link, self.clock = db, theses, store, link, clock
+        self.model_gate = model_gate  # returns why the model is known to be down (from the cached probe), or ''
 
     def _ask(self, system: str, payload: dict[str, Any], effort: str) -> tuple[Any, str, str]:
+        if self.model_gate is not None:
+            why = self.model_gate()
+            if why:
+                raise RuntimeError(f"model unavailable (cached resolution): {why}")
         messages = [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)}]
         result = self.link.chat(messages, response_format={"type": "json_object"}, effort=effort, max_tokens=2500, temperature=0.2)
         return _parse_json(result.text), result.text, getattr(result, "model", "") or ""
