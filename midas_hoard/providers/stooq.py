@@ -43,6 +43,8 @@ class StooqProvider(Provider):
     delay = "End of day; typically available after the session close."
     license = "Provider terms apply (personal use)."
     intervals = ("d", "w", "m", "q", "y")
+    blocked = ("Stooq now answers scripts with a JavaScript browser check, so it cannot be fetched automatically. "
+               "Use yahoo or a keyed provider, or import the CSV you downloaded by hand with the csv provider.")
 
     def fetch(self, symbol: str, start: Optional[str], end: Optional[str], interval: str = "d", **options: Any) -> FetchResult:
         iv = INTERVALS.get(interval.lower())
@@ -52,7 +54,11 @@ class StooqProvider(Provider):
         params: dict[str, Any] = {"s": sym, "i": iv}
         response = self.http.get(URL, params, provider=self.id)
         text = response.text.strip()
-        if response.status_code == 404 or not text or text.lower().startswith("no data") or "<html" in text[:200].lower():
+        head = text[:300].lower()
+        if "text/html" in response.content_type.lower() or head.startswith(("<!doctype", "<html")) or "<html" in head:
+            raise MidasError("provider_unavailable", "stooq answered with a browser-check page (JavaScript required), not data.",
+                             "Stooq now requires a browser check; use yahoo or a keyed provider.", provider=self.id)
+        if response.status_code == 404 or not text or text.lower().startswith("no data"):
             if "apikey" in text.lower() or "captcha" in text.lower():
                 raise MidasError("provider_unavailable", "stooq asks for an API key or captcha for this request.",
                                  "Open stooq.com in a browser, or import the series with the csv provider.", provider=self.id)

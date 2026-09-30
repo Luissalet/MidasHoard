@@ -87,6 +87,7 @@ class HttpResponse:
     cached: bool
     fetched_at: float
     url: str
+    content_type: str = ""
 
     @property
     def status_code(self) -> int:
@@ -132,11 +133,11 @@ class HttpClient:
             return entry
         return None
 
-    def _write_cache(self, key: str, url: str, status: int, text: str, fetched_at: float) -> None:
+    def _write_cache(self, key: str, url: str, status: int, text: str, fetched_at: float, content_type: str = "") -> None:
         path = self._path(key)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"url": url, "status": status, "text": text, "fetched_at": fetched_at}), encoding="utf-8")
+            path.write_text(json.dumps({"url": url, "status": status, "text": text, "fetched_at": fetched_at, "content_type": content_type}), encoding="utf-8")
         except OSError:
             pass
 
@@ -174,26 +175,26 @@ class HttpClient:
             self._client = None
 
     def get(self, url: str, params: Optional[dict[str, Any]] = None, *, ttl: Optional[int] = None, provider: str = "",
-            use_cache: bool = True) -> HttpResponse:
+            use_cache: bool = True, headers: Optional[dict[str, str]] = None) -> HttpResponse:
         ttl = self.ttl if ttl is None else ttl
         key = self._key(url, params)
         if use_cache and ttl > 0:
             entry = self._read_cache(key, ttl, allow_stale=False)
             if entry:
                 self.hits += 1
-                return HttpResponse(int(entry["status"]), entry["text"], True, float(entry["fetched_at"]), url)
+                return HttpResponse(int(entry["status"]), entry["text"], True, float(entry["fetched_at"]), url, entry.get("content_type", ""))
         if self.offline:
             entry = self._read_cache(key, ttl, allow_stale=True)
             if entry:
                 self.hits += 1
-                return HttpResponse(int(entry["status"]), entry["text"], True, float(entry["fetched_at"]), url)
+                return HttpResponse(int(entry["status"]), entry["text"], True, float(entry["fetched_at"]), url, entry.get("content_type", ""))
             raise MidasError("provider_unavailable", f"{provider or 'provider'}: offline mode, nothing cached for this request.",
                              "Unset MIDAS_OFFLINE to allow network access, or use the csv/fake providers.", provider=provider)
         self.misses += 1
         last_error = ""
         for attempt in range(2):
             try:
-                response = self._http().get(url, params=params)
+                response = self._http().get(url, params=params, headers=headers)
             except httpx.HTTPError as error:
                 last_error = f"{type(error).__name__}: {error}"
                 if attempt == 0:
@@ -201,7 +202,7 @@ class HttpClient:
                     continue
                 stale = self._read_cache(key, ttl, allow_stale=True)
                 if stale:
-                    return HttpResponse(int(stale["status"]), stale["text"], True, float(stale["fetched_at"]), url)
+                    return HttpResponse(int(stale["status"]), stale["text"], True, float(stale["fetched_at"]), url, stale.get("content_type", ""))
                 raise MidasError("provider_unavailable", f"{provider or 'provider'} could not be reached ({last_error}).",
                                  "Check the connection; cached responses are used when present.", provider=provider) from error
             if response.status_code == 429:
@@ -216,13 +217,14 @@ class HttpClient:
                     continue
                 stale = self._read_cache(key, ttl, allow_stale=True)
                 if stale:
-                    return HttpResponse(int(stale["status"]), stale["text"], True, float(stale["fetched_at"]), url)
+                    return HttpResponse(int(stale["status"]), stale["text"], True, float(stale["fetched_at"]), url, stale.get("content_type", ""))
                 raise MidasError("provider_unavailable", f"{provider or 'provider'} answered {last_error}.", "Try again later.",
                                  provider=provider)
             now = self.clock()
-            if response.status_code == 200:
-                self._write_cache(key, url, 200, response.text, now)
-            return HttpResponse(response.status_code, response.text, False, now, url)
+            ctype = response.headers.get("content-type", "")
+            if response.status_code == 200 and "text/html" not in ctype.lower():
+                self._write_cache(key, url, 200, response.text, now, ctype)  # challenge pages are never cached
+            return HttpResponse(response.status_code, response.text, False, now, url, ctype)
         raise MidasError("provider_unavailable", f"{provider or 'provider'}: {last_error}", provider=provider)  # pragma: no cover
 
 
@@ -237,16 +239,29 @@ class Provider:
     unofficial = False
     needs_network = True
     intervals = ("d",)
+    needs_key = False
+    blocked = ""  # non-empty: why the provider currently cannot be used from a script
 
     def __init__(self, http: HttpClient):
         self.http = http
+        self.key_source: Optional[Callable[[str], str]] = None
+
+    def key(self) -> str:
+        return (self.key_source(self.id) if self.key_source else "").strip()
 
     def available(self) -> tuple[bool, str]:
         return True, ""
 
     def describe(self) -> dict[str, Any]:
         ok, reason = self.available()
-        return {"id": self.id, "name": self.name, "terms": self.terms, "delay": self.delay, "license": self.license,
+        status = "ok"
+        if self.blocked:
+            status, reason = "blocked", self.blocked
+        elif self.needs_key and not ok:
+            status = "needs_key"
+        elif not ok:
+            status = "unavailable"
+        return {"status": status, "needs_key": self.needs_key, "configured": bool(self.key()) if self.needs_key else None, "id": self.id, "name": self.name, "terms": self.terms, "delay": self.delay, "license": self.license,
                 "unofficial": self.unofficial, "available": ok, "reason": reason, "needs_network": self.needs_network,
                 "intervals": list(self.intervals)}
 
