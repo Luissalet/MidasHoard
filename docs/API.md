@@ -33,7 +33,7 @@ Base URL `http://127.0.0.1:5192`. Every body is JSON. Errors are `{"error", "cod
 | `GET /api/lab/experiments`, `GET /api/lab/experiments/{run_id}` | `experiments_list` |
 | `GET /api/portfolios`, `GET/PUT/DELETE /api/portfolios/{name}`, `POST /api/portfolios/{name}/analyze` | `portfolio_analyze`, `portfolio_set` |
 | `POST /api/reports` | `report_export` |
-| `GET/PUT /api/settings` | language, offline, clear_cache, backend |
+| `GET/PUT /api/settings` | language, offline, clear_cache, backend, keys (write-only: `{provider: key}`, empty removes; responses carry `keys.<id> = {configured, last4, source}`, never the value) |
 
 ## Tools
 
@@ -45,7 +45,7 @@ Health: providers, data counts, models, disk. _read-only._
 
 ### `market_providers`
 
-List data providers with terms, delay and licence. _read-only._
+List data providers with terms, delay, licence and status (`ok`, `needs_key`, `blocked`). _read-only._
 
 ### `market_search`
 
@@ -64,8 +64,8 @@ Fetch a series and freeze it as a provenance-tagged snapshot. _writes._
 
 | Argument | Type | Notes |
 |---|---|---|
-| `provider` * | string | stooq / fred / ecb / coingecko / yahoo / csv / fake |
-| `symbol` * | string | stooq aapl.us / ^spx / eurusd; fred CPIAUCSL; ecb EXR/D.USD.EUR.SP00.A; coingecko bitcoin:eur; csv any name. |
+| `provider` * | string | yahoo / fred / ecb / coingecko / alphavantage / tiingo / csv / fake (stooq is blocked by a browser check) |
+| `symbol` * | string | yahoo AAPL / ^GSPC / ^IBEX / SAN.MC / EURUSD=X / BTC-EUR; alphavantage IBM; tiingo aapl; fred CPIAUCSL; ecb EXR/D.USD.EUR.SP00.A; coingecko bitcoin:eur; csv any name. |
 | `start` | string | YYYY-MM-DD |
 | `end` | string | YYYY-MM-DD |
 | `interval` | string |  |
@@ -142,9 +142,9 @@ Create an investment thesis with a rival hypothesis and rules. _writes._
 | `rival` * | string | Forced rival hypothesis: the best alternative explanation of the same facts. |
 | `as_of` | string | Knowledge cutoff (default today). Evidence metrics never use data after it. |
 | `horizon` | string | 6m, 12m, 2y or a date. |
-| `assets` | array | ["aapl.us"] or [{"symbol","provider","snapshot_id","alias"}] |
+| `assets` | array | ["AAPL"] or [{"symbol","provider","snapshot_id","alias"}] |
 | `assumptions` | array |  |
-| `rules` | array | Invalidation rules, true = invalidated: "close(aapl.us) < 150", "yoy(CPIAUCSL) > 4", "drawdown(^spx) < -20", "sma(x,50) < sma(x,200)". |
+| `rules` | array | Invalidation rules, true = invalidated: "close(AAPL) < 150", "yoy(CPIAUCSL) > 4", "drawdown(^GSPC) < -20", "sma(x,50) < sma(x,200)". |
 | `notes` | string |  |
 
 ### `thesis_get`
@@ -301,7 +301,7 @@ Set a portfolio's holdings (list or CSV) or delete it (action=delete, confirm=tr
 | `name` | string |  |
 | `action` | string |  |
 | `confirm` | boolean |  |
-| `holdings` | array | [{"symbol": "aapl.us", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}] |
+| `holdings` | array | [{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}] |
 | `csv_text` | string | CSV with header: symbol,quantity[,snapshot_id,currency,cost_basis,label] |
 | `path` | string |  |
 | `currency` | string | Base currency of the portfolio (default EUR). |

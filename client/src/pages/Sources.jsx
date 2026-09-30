@@ -21,7 +21,7 @@ export default function Sources() {
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {providers.providers.map((p) => (
               <div key={p.id} className="panel space-y-1">
-                <div className="flex items-center justify-between gap-2"><h2>{p.name}</h2><span className="flex gap-1">{p.unofficial && <Chip className="chip chip-amber">{t("unofficial")}</Chip>}<Chip className={p.available ? "chip chip-ok" : "chip chip-danger"}>{p.available ? t("available") : t("unavailable")}</Chip></span></div>
+                <div className="flex items-center justify-between gap-2"><h2>{p.name}</h2><span className="flex gap-1">{p.unofficial && <Chip className="chip chip-amber">{t("unofficial")}</Chip>}{p.status === "blocked" ? <Chip className="chip chip-danger">{t("blocked")}</Chip> : p.status === "needs_key" ? <Chip className="chip chip-amber">{t("needs_key")}</Chip> : <Chip className={p.available ? "chip chip-ok" : "chip chip-danger"}>{p.available ? t("available") : t("unavailable")}</Chip>}</span></div>
                 <div className="help mono">{p.id}{p.needs_network ? "" : ` · ${t("local")}`}{p.intervals ? ` · ${p.intervals.join("/")}` : ""}</div>
                 <p className="m-0">{p.terms}</p>
                 <p className="help m-0">{t("delay")}: {p.delay}</p>

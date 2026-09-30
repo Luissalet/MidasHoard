@@ -7,7 +7,7 @@ Laboratorio local de investigación de mercados para una sola persona. Congela l
 ## Qué hace
 
 - **Mercado**: busca símbolos, descarga una serie y congélala como instantánea (CSV canónico, sha256, proveedor, momento de descarga, divisa, indicador de ajuste). Compara series con correlación y rendimiento relativo; si difieren la divisa, el ajuste o la frecuencia se rechaza salvo que lo permitas, y toda conversión de divisa queda registrada paso a paso. Los gráficos son SVG dibujados a mano.
-- **Tesis**: una afirmación, una hipótesis rival obligatoria, una fecha de corte (`as_of`), un horizonte, evidencia a favor y en contra, y reglas de invalidación en un lenguaje pequeño sin `eval` (`close(aapl.us) < 150`, `yoy(CPIAUCSL) > 4`, `drawdown(^spx) < -20`, `sma(x,50) < sma(x,200)`). Una regla verdadera invalida la tesis. Las métricas de la evidencia nunca usan datos posteriores al corte. Las comprobaciones son idempotentes y una invalidación emite un único evento.
+- **Tesis**: una afirmación, una hipótesis rival obligatoria, una fecha de corte (`as_of`), un horizonte, evidencia a favor y en contra, y reglas de invalidación en un lenguaje pequeño sin `eval` (`close(AAPL) < 150`, `yoy(CPIAUCSL) > 4`, `drawdown(^GSPC) < -20`, `sma(x,50) < sma(x,200)`). Una regla verdadera invalida la tesis. Las métricas de la evidencia nunca usan datos posteriores al corte. Las comprobaciones son idempotentes y una invalidación emite un único evento.
 - **Laboratorio**: estrategias declarativas (JSON, sin código). Una señal en la barra t solo afecta a la posición que rinde en la barra t+1 (lo demuestra un test). Costes, tamaño de posición, rebalanceo, largo/corto, referencia, reserva sellada, walk-forward anclado con rejilla opcional de parámetros, prueba de permutación por bloques, intervalo bootstrap del Sharpe, ajuste de Bonferroni y Sharpe deflactado. Cada variante queda registrada, también los fallos, con aviso de pruebas múltiples.
 - **Comité**: dos defensas, un revisor de riesgos independiente y un árbitro sobre un paquete de evidencia fijo. Las citas se validan y cada número pasa por el libro de cifras (observado, derivado, citado, propuesto o sin respaldo). Sin modelo devuelve el paquete de evidencia y métricas deterministas.
 - **Cartera**: posiciones desde tabla o CSV, valoración a una fecha, distribución, exposición por divisa, concentración, volatilidad, caída máxima y correlación, con cada conversión registrada.
@@ -17,13 +17,17 @@ Laboratorio local de investigación de mercados para una sola persona. Congela l
 
 | Proveedor | Datos | Notas |
 |---|---|---|
-| Stooq | precios al cierre, índices, divisas | sin clave; uso personal; ajuste desconocido, se anota como no ajustado |
+| Yahoo Finance (por defecto) | precios diarios de acciones, ETF, índices, divisas y cripto: `AAPL`, `^GSPC`, `^IBEX`, `SAN.MC`, `EURUSD=X`, `BTC-EUR` | sin clave; endpoint público no oficial, solo uso personal y de investigación; cierres ajustados por splits y dividendos, con los eventos anotados; puede cambiar o limitar sin aviso |
 | FRED | series macro | Fuente: Federal Reserve Bank of St. Louis; valores tal como se revisaron, no vintages |
 | Banco Central Europeo (European Central Bank) | tipos de referencia del euro y estadísticas (SDMX) | Fuente: ECB Data Portal |
 | CoinGecko | precios de cripto, hasta 365 días en el plan gratuito | datos de CoinGecko; con límite de ritmo |
-| Yahoo Finance | opcional, no oficial | desactivado salvo que esté la librería; puede romperse sin aviso |
+| Alpha Vantage | precios diarios | opcional, desactivado hasta añadir una clave gratuita (`MIDAS_ALPHAVANTAGE_KEY` o Ajustes); barras sin ajustar, cupo diario pequeño |
+| Tiingo | precios diarios ajustados, sobre todo EE. UU. | opcional, desactivado hasta añadir una clave gratuita (`MIDAS_TIINGO_KEY` o Ajustes) |
+| Stooq | precios al cierre | bloqueado ahora mismo: responde a los scripts con una comprobación de navegador con JavaScript y Midas no intenta saltársela; las descargas fallan con `provider_unavailable` y la fuente aparece como bloqueada |
 | CSV | tus propios ficheros | declaras divisa o unidad; no se adivina nada |
 | fake | series sintéticas deterministas | para pruebas, demostraciones y uso sin conexión |
+
+Las claves de API introducidas en Ajustes son de solo escritura: se guardan en local y la API solo informa de `configured` y de los cuatro últimos caracteres. Cada proveedor aparece como `ok`, `needs_key` o `blocked` en la página Fuentes y en `market_providers`.
 
 Las respuestas se guardan en caché en disco; con `MIDAS_OFFLINE=1` solo se responde desde la caché. Lee las condiciones de cada proveedor, que aparecen con cada instantánea.
 

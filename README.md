@@ -7,7 +7,7 @@ A local market-research lab for one person. It freezes market data into snapshot
 ## What it does
 
 - **Market** - search symbols, fetch a series and freeze it as a snapshot (canonical CSV, sha256, provider, fetch time, currency, adjustment flag). Compare series with correlation and relative performance; mixed currency, adjustment or frequency is refused unless you allow it, and an exchange-rate conversion is recorded step by step. Charts are hand-drawn SVG.
-- **Theses** - a claim, a forced rival hypothesis, a knowledge cutoff (`as_of`), a horizon, evidence for and against, and invalidation rules written in a small language with no `eval` (`close(aapl.us) < 150`, `yoy(CPIAUCSL) > 4`, `drawdown(^spx) < -20`, `sma(x,50) < sma(x,200)`). A true rule means the thesis is invalidated. Evidence metrics never use data after the cutoff. Checks are idempotent and an invalidation emits one event.
+- **Theses** - a claim, a forced rival hypothesis, a knowledge cutoff (`as_of`), a horizon, evidence for and against, and invalidation rules written in a small language with no `eval` (`close(AAPL) < 150`, `yoy(CPIAUCSL) > 4`, `drawdown(^GSPC) < -20`, `sma(x,50) < sma(x,200)`). A true rule means the thesis is invalidated. Evidence metrics never use data after the cutoff. Checks are idempotent and an invalidation emits one event.
 - **Lab** - declarative strategy specs (JSON, no code). A signal on bar t only affects the position earning bar t+1 (a test proves it). Costs, sizing, rebalancing, long/short, benchmark, sealed holdout, anchored walk-forward with an optional parameter grid, block-permutation test, block-bootstrap Sharpe interval, Bonferroni haircut and deflated Sharpe. Every variant is logged, failures included, with a multiple-testing warning.
 - **Committee** - two advocates, an independent risk reviewer and an arbiter over a fixed evidence pack. Citations are validated and every number goes through the number ledger (observed, derived, cited, proposed or unmatched). Without a model it returns the evidence pack and deterministic metrics.
 - **Portfolio** - holdings from a table or CSV, valuation at a date, allocation, currency exposure, concentration, volatility, drawdown, correlation, with every FX conversion recorded.
@@ -17,13 +17,17 @@ A local market-research lab for one person. It freezes market data into snapshot
 
 | Provider | Data | Notes |
 |---|---|---|
-| Stooq | end-of-day prices, indices, FX | no key; personal use; adjustment unknown, recorded as not adjusted |
+| Yahoo Finance (default) | daily prices for equities, ETFs, indices, FX and crypto: `AAPL`, `^GSPC`, `^IBEX`, `SAN.MC`, `EURUSD=X`, `BTC-EUR` | no key; unofficial public chart endpoint, personal and research use only; closes adjusted for splits and dividends, events recorded; may change or throttle without notice |
 | FRED | macro series | Source: Federal Reserve Bank of St. Louis; values are as last revised, not vintages |
 | European Central Bank | euro reference rates and statistics (SDMX) | Source: ECB Data Portal |
 | CoinGecko | crypto prices, up to 365 days on the free tier | data provided by CoinGecko; throttled |
-| Yahoo Finance | optional, unofficial | off unless the library is installed; may break without notice |
+| Alpha Vantage | daily prices | optional, off until you add a free key (`MIDAS_ALPHAVANTAGE_KEY` or Settings); raw bars, small daily allowance |
+| Tiingo | daily adjusted prices, mostly US | optional, off until you add a free key (`MIDAS_TIINGO_KEY` or Settings) |
+| Stooq | end-of-day prices | currently blocked: it answers scripts with a JavaScript browser check, which Midas does not try to get around; fetches fail with `provider_unavailable` and the source is marked blocked |
 | CSV | your own files | you declare currency or unit; nothing is guessed |
 | fake | deterministic synthetic series | for tests, demos and offline use |
+
+API keys entered in Settings are write-only: they are stored locally and the API only reports `configured` and the last four characters. Providers show as `ok`, `needs_key` or `blocked` in the Sources page and in `market_providers`.
 
 Responses are cached on disk; `MIDAS_OFFLINE=1` answers only from the cache. Read each provider's terms, shown with every snapshot.
 

@@ -23,7 +23,7 @@ function RuleLines({ value, onChange }) {
   }, [value]);
   return (
     <div className="space-y-1">
-      <textarea className="field" rows={3} value={value} onChange={(e) => onChange(e.target.value)} placeholder={"close(aapl.us) < 150\nyoy(CPIAUCSL) > 4\nsma(aapl.us,50) < sma(aapl.us,200)"} aria-label={t("rules")} />
+      <textarea className="field" rows={3} value={value} onChange={(e) => onChange(e.target.value)} placeholder={"close(AAPL) < 150\nyoy(CPIAUCSL) > 4\nsma(AAPL,50) < sma(AAPL,200)"} aria-label={t("rules")} />
       {lines.map((line) => {
         const c = checks[line];
         if (!c) return null;
@@ -70,7 +70,7 @@ function CreateForm({ onCreated }) {
         <Field label={t("as_of")} hint={t("thesis_as_of_hint")}><input className="field" type="date" value={f.as_of} onChange={set("as_of")} /></Field>
         <Field label={t("horizon")} hint="6m · 12m · 2y · 2026-12-31"><input className="field" value={f.horizon} onChange={set("horizon")} /></Field>
       </div>
-      <Field label={t("assets")} hint={t("assets_hint")}><input className="field" value={f.assets} onChange={set("assets")} placeholder="aapl.us, ^spx" /></Field>
+      <Field label={t("assets")} hint={t("assets_hint")}><input className="field" value={f.assets} onChange={set("assets")} placeholder="AAPL, ^GSPC" /></Field>
       <Field label={t("rules")} hint={t("rules_hint")}><RuleLines value={f.rules} onChange={(v) => setF({ ...f, rules: v })} /></Field>
       <Field label={t("assumptions")}><textarea className="field" rows={2} value={f.assumptions} onChange={set("assumptions")} /></Field>
       <ErrorBox error={error} t={t} />

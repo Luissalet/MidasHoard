@@ -160,7 +160,7 @@ export default function Market() {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState("search");
-  const [form, setForm] = useState({ provider: "fake", symbol: "", start: "", end: "", interval: "d", currency: "" });
+  const [form, setForm] = useState({ provider: "yahoo", symbol: "", start: "", end: "", interval: "d", currency: "" });
   const [csv, setCsv] = useState({ symbol: "", currency: "", unit: "", text: "", dayfirst: false, delimiter: "", decimal: "" });
   const [fetchNotes, setFetchNotes] = useState([]);
 
@@ -241,10 +241,10 @@ export default function Market() {
             {tab === "manual" && (
               <form onSubmit={fetchManual} className="space-y-2">
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label={t("provider")}><select className="field" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>{(providers.length ? providers : [{ id: "fake" }]).filter((p) => p.id !== "csv").map((p) => <option key={p.id} value={p.id}>{p.name || p.id}</option>)}</select></Field>
+                  <Field label={t("provider")}><select className="field" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })}>{(providers.length ? providers : [{ id: "yahoo" }]).filter((p) => p.id !== "csv").map((p) => <option key={p.id} value={p.id} disabled={p.status === "blocked" || p.status === "needs_key"}>{p.name || p.id}{p.status === "blocked" ? ` (${t("blocked")})` : p.status === "needs_key" ? ` (${t("needs_key")})` : ""}</option>)}</select></Field>
                   <Field label={t("interval")}><select className="field" value={form.interval} onChange={(e) => setForm({ ...form, interval: e.target.value })}>{["d", "w", "m", "q", "y"].map((i) => <option key={i} value={i}>{i}</option>)}</select></Field>
                 </div>
-                <Field label={t("symbol")}><input className="field" required placeholder="aapl.us · CPIAUCSL · bitcoin:eur · fake.up" value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value })} /></Field>
+                <Field label={t("symbol")}><input className="field" required placeholder="AAPL · ^GSPC · SAN.MC · EURUSD=X · CPIAUCSL · fake.up" value={form.symbol} onChange={(e) => setForm({ ...form, symbol: e.target.value })} /></Field>
                 <div className="grid grid-cols-3 gap-2">
                   <Field label={t("start")}><input className="field" type="date" value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} /></Field>
                   <Field label={t("end")}><input className="field" type="date" value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} /></Field>
