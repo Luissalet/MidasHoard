@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "midas-hoard"
+version = "0.1.0"
+description = "A local market-research lab: frozen market snapshots, falsifiable theses, an honest backtester and a number-checked committee, exposed to assistants through MCP. Research only."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [{ name = "Luissalet" }]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "pydantic>=2.7",
+  "httpx>=0.27",
+  "mcp>=1.10,<2",
+  "pandas>=2.2",
+  "numpy>=2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+icon = ["pillow>=11", "numpy>=2"]
+
+[project.scripts]
+midas-hoard = "midas_hoard.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["midas_hoard*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning", "ignore::FutureWarning"]

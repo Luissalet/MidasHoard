@@ -1,0 +1,3 @@
+# Only for scripts/make_icon.py
+pillow>=11
+numpy>=2
