@@ -11,11 +11,14 @@ Steps (the family recipe):
 3. recolour the dragon by luminance with a dark→light ramp (Midas: #5c4400 → #f2c230,
    forest green); the eye keeps a light colour; the background becomes the family's
    flat dark navy (the black rounded-square corners disappear);
-4. compose a gold vector glyph ≈400 px centred at (627, 768): a coin with a rising line and
-   parallels, with a dark outline like the other icons.
+4. compose a gold vector glyph ≈400 px centred at (627, 768): a solid gold coin with an
+   engraved rim and a rising line cut into it, with a dark outline like the other icons.
 
-When dragon-src.png is not at hand, a sibling app's finished icon works as the source: its gold glyph is
-detected and inpainted exactly like the play button (pass --src <sibling>/app-icon.png; the script also looks for one next to this repository).
+The source is the family dragon: Icons/dragon-src.png or Icons/watch hoard.png (the
+dragon with the yellow play button). Only the button and its halo are inpainted, so the
+dragon's body keeps its real shape around the glyph. A sibling app's finished icon still
+works as a last resort (its whole glyph box is cleared and inpainted, which smears the
+body behind it — avoid it when the dragon itself is available).
 
 Outputs: app-icon.png (1254²), client/public/icon-512.png, icon-192.png, favicon.ico
 (16-256) and dist-icons/Midas hoard.png (for the shared Icons folder).
@@ -47,7 +50,7 @@ GLYPH_SIZE = 400
 
 def default_source() -> Path | None:
     for candidate in (ROOT.parent / "Icons" / "dragon-src.png", ROOT.parent / "icons" / "dragon-src.png", Path.home() / "icons" / "dragon-src.png",
-                      ):
+                      ROOT.parent / "Icons" / "watch hoard.png"):
         if candidate.is_file():
             return candidate
     for sibling in sorted(ROOT.parent.glob("*/app-icon.png")):
@@ -81,13 +84,19 @@ def eye_mask(rgb: np.ndarray) -> np.ndarray:
     return cv2.dilate(cyan, np.ones((5, 5), np.uint8))
 
 
-def recolour_dragon(src: Image.Image) -> Image.Image:
+def is_sibling_icon(path: Path) -> bool:
+    """A finished app icon (carries its own glyph) rather than the family dragon."""
+    return path.name == "app-icon.png"
+
+
+def recolour_dragon(src: Image.Image, clear_glyph_box: bool = False) -> Image.Image:
     rgb = np.array(src.convert("RGB").resize((SIZE, SIZE), Image.LANCZOS))
     button = button_mask(rgb)
-    # A sibling's finished icon carries its own glyph (outlined, recoloured): clear the whole glyph area too.
-    cx, cy = GLYPH_CENTER
-    half = int(GLYPH_SIZE * 0.52)
-    cv2.rectangle(button, (cx - half, cy - half), (cx + half, cy + half), 255, thickness=cv2.FILLED)
+    if clear_glyph_box:
+        # A sibling's finished icon carries its own outlined glyph: clear the whole glyph area too.
+        cx, cy = GLYPH_CENTER
+        half = int(GLYPH_SIZE * 0.52)
+        cv2.rectangle(button, (cx - half, cy - half), (cx + half, cy + half), 255, thickness=cv2.FILLED)
     eye = eye_mask(rgb)
     lum = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY).astype(np.float32)
     lum[eye > 0] = 200.0  # the eye counts as dragon (light) for the flat map
@@ -112,7 +121,7 @@ def recolour_dragon(src: Image.Image) -> Image.Image:
 
 
 # ---------------------------------------------------------------------------
-# glyph: a globe with meridians and parallels
+# glyph: a gold coin with an engraved rising line
 # ---------------------------------------------------------------------------
 
 def glyph_layer(scale: int = 4) -> Image.Image:
@@ -130,13 +139,21 @@ def glyph_layer(scale: int = 4) -> Image.Image:
         draw_fn(ImageDraw.Draw(m), int(width * u))
         return m
 
-    def coin(d, w):  # coin rim, inner ring, and a rising line with an arrow head
-        r = 165
-        d.ellipse([P(-r, -r), P(r, r)], outline=255, width=w)
-        d.ellipse([P(-128, -128), P(128, 128)], outline=255, width=max(1, w // 2))
-        pts = [P(-95, 55), P(-30, -5), P(10, 30), P(85, -60)]
+    def fill_mask(draw_fn):
+        m = Image.new("L", (big, big), 0)
+        draw_fn(ImageDraw.Draw(m))
+        return m
+
+    def disc(r):
+        return fill_mask(lambda d: d.ellipse([P(-r, -r), P(r, r)], fill=255))
+
+    def engraving(d, w):  # inner rim and a rising line with an arrow head, cut into the coin
+        d.ellipse([P(-124, -124), P(124, 124)], outline=255, width=max(1, int(w * 0.45)))
+        pts = [P(-80, 48), P(-28, -2), P(8, 28), P(62, -30)]
         d.line(pts, fill=255, width=w, joint="curve")
-        d.polygon([P(105, -85), P(55, -70), P(95, -30)], fill=255)
+        for x, y in pts[1:3]:
+            d.ellipse([P(x - 11, y - 11), P(x + 11, y + 11)], fill=255)
+        d.polygon([P(92, -62), P(36, -52), P(82, -8)], fill=255)
 
     top, bottom = np.array(GOLD_TOP, np.float32), np.array(GOLD_BOTTOM, np.float32)
     ramp = np.linspace(0, 1, big, dtype=np.float32)[:, None, None]
@@ -144,13 +161,14 @@ def glyph_layer(scale: int = 4) -> Image.Image:
     outline_colour = Image.new("RGB", (big, big), OUTLINE)
 
     layer = Image.new("RGBA", (big, big), (0, 0, 0, 0))
-    layer.paste(outline_colour, (0, 0), stroke_mask(coin, 40))
-    layer.paste(gold, (0, 0), stroke_mask(coin, 16))
+    layer.paste(outline_colour, (0, 0), disc(178))
+    layer.paste(gold, (0, 0), disc(160))
+    layer.paste(outline_colour, (0, 0), stroke_mask(engraving, 22))
     return layer.resize((box, box), Image.LANCZOS)
 
 
-def compose(src: Image.Image) -> Image.Image:
-    base = recolour_dragon(src).convert("RGBA")
+def compose(src: Image.Image, clear_glyph_box: bool = False) -> Image.Image:
+    base = recolour_dragon(src, clear_glyph_box).convert("RGBA")
     glyph = glyph_layer()
     x = GLYPH_CENTER[0] - glyph.width // 2
     y = GLYPH_CENTER[1] - glyph.height // 2
@@ -167,7 +185,7 @@ def main() -> int:
     if src_path is None or not src_path.is_file():
         print("dragon-src.png not found: pass --src")
         return 2
-    icon = compose(Image.open(src_path))
+    icon = compose(Image.open(src_path), clear_glyph_box=is_sibling_icon(src_path))
     icon.save(ROOT / "app-icon.png", optimize=True)
     public = ROOT / "client" / "public"
     public.mkdir(parents=True, exist_ok=True)
