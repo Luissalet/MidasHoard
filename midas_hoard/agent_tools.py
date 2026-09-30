@@ -164,7 +164,7 @@ class ThesisCreateArgs(BaseModel):
     rival: str = Field(..., min_length=12, max_length=2000, description="Forced rival hypothesis: the best alternative explanation of the same facts.")
     as_of: Optional[str] = Field(None, max_length=10, description="Knowledge cutoff (default today). Evidence metrics never use data after it.")
     horizon: str = Field("", max_length=12, description="6m, 12m, 2y or a date.")
-    assets: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='["AAPL"] or [{"symbol","provider","snapshot_id","alias"}]')
+    assets: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='["AAPL"], snapshot ids ("snp_...") or [{"symbol","provider","snapshot_id","alias"}]; snapshot ids are stored with the snapshot symbol and provider')
     assumptions: Optional[list[str]] = None
     rules: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='Invalidation rules, true = invalidated: "close(AAPL) < 150", "yoy(CPIAUCSL) > 4", "drawdown(^GSPC) < -20", "sma(x,50) < sma(x,200)".')
     notes: str = Field("", max_length=4000)
@@ -284,7 +284,7 @@ class PortfolioAnalyzeArgs(BaseModel):
     name: Optional[str] = Field(None, max_length=60, description="Omit to list the portfolios.")
     date: Optional[str] = Field(None, max_length=10, description="Valuation date (prices on or before it); default the latest common date.")
     currency: Optional[str] = Field(None, max_length=3)
-    fx: Optional[dict[str, str]] = Field(None, description='{"USD": "<snapshot id of the USD/base rate>"}')
+    fx: Optional[Union[str, dict[str, str]]] = Field(None, description='A rate snapshot id (e.g. the EURUSD=X one; the pair is read from it) or {"USD": "<snapshot id of the USD/base rate>"}')
 
 
 class ReportArgs(BaseModel):

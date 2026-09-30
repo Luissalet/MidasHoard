@@ -78,3 +78,31 @@ def test_unknown_portfolio(svc):
     with pytest.raises(MidasError) as e:
         tool(svc, "portfolio_analyze", name="ghost")
     assert e.value.code == "not_found"
+
+
+def test_fx_accepts_a_snapshot_id_string_and_says_what_was_applied(svc, fetch):
+    usd = sid(fetch("fake.up"))
+    fx = sid(fetch("fakefx.eurusd"))
+    tool(svc, "portfolio_set", name="mixs", currency="EUR", holdings=[{"symbol": "fake.up", "quantity": 10, "snapshot_id": usd, "currency": "USD"}])
+    a = tool(svc, "portfolio_analyze", name="mixs", fx=fx)
+    assert a["conversions"][0]["fx_snapshot"] == fx and a["conversions"][0]["auto"] is False
+    assert any(fx in w and "applied to convert USD holdings to EUR" in w for w in a["warnings"])
+    tool(svc, "portfolio_set", name="gbp", currency="GBP", holdings=[{"symbol": "fake.up", "quantity": 1, "snapshot_id": usd, "currency": "USD"}])
+    with pytest.raises(MidasError) as e:
+        tool(svc, "portfolio_analyze", name="gbp", fx=fx)
+    assert e.value.code == "incompatible_series"
+
+
+def test_market_series_fx_string_records_the_conversion(svc, fetch):
+    usd = sid(fetch("fake.up"))
+    fx = sid(fetch("fakefx.eurusd"))
+    out = tool(svc, "market_series", snapshot_id=usd, convert_to="EUR", fx=fx)
+    assert json_has(out, "fx_snapshot", fx)
+
+
+def json_has(obj, key, value):
+    if isinstance(obj, dict):
+        return obj.get(key) == value or any(json_has(v, key, value) for v in obj.values())
+    if isinstance(obj, list):
+        return any(json_has(v, key, value) for v in obj)
+    return False

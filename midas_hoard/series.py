@@ -131,7 +131,7 @@ def check_compatible(snaps: list[Snapshot], *, allow_incompatible: bool = False,
     if len(currencies) > 1:
         problems.append("currencies differ: " + ", ".join(f"{s.meta['symbol']}={s.meta['currency'] or 'none'}" for s in snaps))
     if any(not s.meta["currency"] for s in snaps) and currencies:
-        warnings.append("some series declare no currency (indices, rates): they are combined as unit-less levels.")
+        warnings.append("some series declare no currency (indices, rates): they are combined as unit-less levels (refetch with market_fetch currency=... to declare one).")
     if len({s.meta["adjusted"] for s in snaps}) > 1:
         problems.append("adjustment differs (adjusted vs unadjusted prices): " + ", ".join(f"{s.meta['symbol']}={'adj' if s.meta['adjusted'] else 'raw'}" for s in snaps))
     if need_same_frequency and len({s.meta["frequency"] for s in snaps}) > 1:

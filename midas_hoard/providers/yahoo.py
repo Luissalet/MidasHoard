@@ -138,7 +138,7 @@ class YahooProvider(Provider):
         raw_ccy = str(meta.get("currency") or "")
         unit = ""
         if kind_index:
-            currency, unit = "", "index points"
+            currency, unit = raw_ccy.upper(), "index points"  # the denomination Yahoo reports; the level itself is in points
         elif raw_ccy == "GBp":
             currency, unit = "GBX", "GBX (pence)"
         else:

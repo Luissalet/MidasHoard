@@ -134,11 +134,20 @@ class Portfolios:
         raise MidasError("incompatible_series", f"A holding is in {source} but the portfolio is in {target}, and no {source}/{target} exchange-rate snapshot exists.",
                          f"Fetch the rate (e.g. market_fetch eurusd) and pass fx={{\"{source}\": \"<snapshot id>\"}}, or set the portfolio currency to {source}.")
 
-    def analyze(self, name: str, *, date: Optional[str] = None, currency: Optional[str] = None, fx: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    def analyze(self, name: str, *, date: Optional[str] = None, currency: Optional[str] = None, fx: Any = None) -> dict[str, Any]:
         pf = self.get(name)
         base = (currency or pf["currency"]).upper()
-        explicit = {k.upper(): v for k, v in (fx or {}).items()}
         warnings: list[str] = []
+        if isinstance(fx, str) and fx.strip():
+            rate_snap = self.store.load(fx.strip())
+            b, q = _fx_pair(rate_snap)
+            if base not in (b, q):
+                raise MidasError("incompatible_series", f"Rate snapshot {rate_snap.id} is {b}/{q}, which does not involve the portfolio currency {base}.",
+                                 "Pass a rate that has the portfolio currency on one side, or set currency.")
+            other = q if base == b else b
+            fx = {other: rate_snap.id}
+            warnings.append(f"fx {rate_snap.id} ({rate_snap.meta['symbol']}, {b}/{q}) applied to convert {other} holdings to {base}.")
+        explicit = {k.upper(): v for k, v in (fx or {}).items()}
         conversions: list[dict[str, Any]] = []
         closes: dict[str, pd.Series] = {}
         rows: list[dict[str, Any]] = []

@@ -142,7 +142,7 @@ Create an investment thesis with a rival hypothesis and rules. _writes._
 | `rival` * | string | Forced rival hypothesis: the best alternative explanation of the same facts. |
 | `as_of` | string | Knowledge cutoff (default today). Evidence metrics never use data after it. |
 | `horizon` | string | 6m, 12m, 2y or a date. |
-| `assets` | array | ["AAPL"] or [{"symbol","provider","snapshot_id","alias"}] |
+| `assets` | array | ["AAPL"], snapshot ids ("snp_...") or [{"symbol","provider","snapshot_id","alias"}]; snapshot ids are stored with the snapshot symbol and provider |
 | `assumptions` | array |  |
 | `rules` | array | Invalidation rules, true = invalidated: "close(AAPL) < 150", "yoy(CPIAUCSL) > 4", "drawdown(^GSPC) < -20", "sma(x,50) < sma(x,200)". |
 | `notes` | string |  |
@@ -316,7 +316,7 @@ Value and analyse a portfolio: allocation, currency exposure, vol, drawdown, cor
 | `name` | string | Omit to list the portfolios. |
 | `date` | string | Valuation date (prices on or before it); default the latest common date. |
 | `currency` | string |  |
-| `fx` | object | {"USD": "<snapshot id of the USD/base rate>"} |
+| `fx` | string/object | A rate snapshot id (the pair is read from it and reported in `warnings`) or {"USD": "<snapshot id of the USD/base rate>"} |
 
 ### `report_export`
 

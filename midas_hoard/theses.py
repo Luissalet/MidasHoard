@@ -107,19 +107,35 @@ class Theses:
         return out
 
     # ------------------------------------------------------------ validation
+    def _is_snapshot_id(self, value: str) -> bool:
+        """A snapshot id: the snp_ prefix, or any string that names an existing snapshot."""
+        value = value.strip()
+        if not value:
+            return False
+        if value.startswith("snp_"):
+            return True
+        try:
+            self.store.meta(value)
+            return True
+        except MidasError:
+            return False
+
     def _clean_assets(self, assets: Any) -> list[dict[str, Any]]:
         out = []
         for a in assets or []:
             if isinstance(a, str):
-                a = {"symbol": a}
+                a = {"snapshot_id": a} if self._is_snapshot_id(a) else {"symbol": a}
+            elif isinstance(a, dict) and not a.get("snapshot_id") and self._is_snapshot_id(str(a.get("symbol", ""))):
+                a = {**a, "snapshot_id": a["symbol"]}
+                a.pop("symbol")
             if not isinstance(a, dict) or not (a.get("symbol") or a.get("snapshot_id")):
                 raise MidasError("invalid_request", f"Each asset needs a symbol or snapshot_id, got {a!r}.",
                                  "Example: {\"symbol\": \"AAPL\", \"provider\": \"yahoo\"}.")
             item = {k: a[k] for k in ("symbol", "provider", "snapshot_id", "alias", "currency") if a.get(k)}
             if item.get("snapshot_id"):
                 meta = self.store.meta(item["snapshot_id"])
-                item.setdefault("symbol", meta["symbol"])
-                item.setdefault("provider", meta["provider"])
+                item["symbol"] = meta["symbol"]
+                item["provider"] = meta["provider"]
             out.append(item)
         if len(out) > 30:
             raise MidasError("invalid_request", "A thesis can list at most 30 assets.", "Split it into several theses.")

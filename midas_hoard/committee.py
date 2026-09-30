@@ -53,7 +53,12 @@ def build_pack(theses: Theses, store: SnapshotStore, thesis_id: str) -> dict[str
     seen: set[str] = set()
     for a in t["assets"]:
         sid = a.get("snapshot_id")
-        meta = store.meta(sid) if sid else store.latest_for_symbol(a["symbol"], a.get("provider")) or store.latest_for_symbol(a["symbol"])
+        if not sid and str(a.get("symbol", "")).startswith("snp_"):
+            sid = a["symbol"]  # assets stored before snapshot ids were recognised
+        try:
+            meta = store.meta(sid) if sid else store.latest_for_symbol(a["symbol"], a.get("provider")) or store.latest_for_symbol(a["symbol"])
+        except MidasError:
+            meta = None
         if meta is None or meta["id"] in seen:
             if meta is None:
                 missing.append(a.get("symbol", "?"))

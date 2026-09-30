@@ -79,7 +79,7 @@ def test_yahoo_happy_path_nulls_splits_and_local_dates(tmp_path):
 def test_yahoo_index_fx_and_pence(tmp_path):
     svc = make_services(tmp_path, lambda r: httpx.Response(200, json=chart(nulls=(), itype="INDEX", splits=False)))
     meta = call_tool(svc, "market_fetch", {"provider": "yahoo", "symbol": "^GSPC"})["snapshot"]
-    assert meta["currency"] == "" and meta["unit"] == "index points"
+    assert meta["currency"] == "USD" and meta["unit"] == "index points"
     svc2 = make_services(tmp_path / "p", lambda r: httpx.Response(200, json=chart(nulls=(), currency="GBp", splits=False)))
     meta2 = call_tool(svc2, "market_fetch", {"provider": "yahoo", "symbol": "VOD.L"})["snapshot"]
     assert meta2["currency"] == "GBX"
@@ -205,3 +205,32 @@ def test_secrets_are_write_only(tmp_path, monkeypatch):
     with pytest.raises(MidasError):
         svc.update_settings({"keys": {"fred": "x"}})
     assert svc.update_settings({"keys": {"alphavantage": ""}})["keys"]["alphavantage"]["configured"] is False
+
+
+def test_yahoo_index_keeps_its_denomination_and_compares_with_a_stock(tmp_path):
+    def handler(request):
+        if "GSPC" in str(request.url):
+            return httpx.Response(200, json=chart(nulls=(), itype="INDEX", splits=False))
+        return httpx.Response(200, json=chart(nulls=(), splits=False))
+
+    svc = make_services(tmp_path, handler)
+    aapl = call_tool(svc, "market_fetch", {"provider": "yahoo", "symbol": "AAPL"})["snapshot"]["id"]
+    spx = call_tool(svc, "market_fetch", {"provider": "yahoo", "symbol": "^GSPC"})["snapshot"]
+    assert spx["currency"] == "USD" and spx["unit"] == "index points"
+    out = call_tool(svc, "market_compare", {"snapshot_ids": [aapl, spx["id"]]})
+    assert "currencies differ" not in json.dumps(out) and out.get("warnings") is not None
+
+
+def test_thesis_assets_accept_snapshot_ids_and_feed_the_committee(tmp_path):
+    svc = make_services(tmp_path, lambda r: httpx.Response(200, json=chart(nulls=(), splits=False)))
+    a = call_tool(svc, "market_fetch", {"provider": "yahoo", "symbol": "AAPL"})["snapshot"]
+    b = call_tool(svc, "market_fetch", {"provider": "yahoo", "symbol": "^GSPC"})["snapshot"]
+    t = call_tool(svc, "thesis_create", {"title": "Trend", "claim": "AAPL keeps rising", "rival": "a rival view that is long enough", "as_of": "2024-01-03",
+                                         "assets": [a["id"], {"snapshot_id": b["id"]}, {"symbol": "AAPL", "provider": "yahoo"}]})
+    assets = call_tool(svc, "thesis_get", {"id": t["id"]})["assets"]
+    assert assets[0] == {"snapshot_id": a["id"], "symbol": "AAPL", "provider": "yahoo"}
+    assert assets[1]["symbol"] == "^GSPC" and assets[2] == {"symbol": "AAPL", "provider": "yahoo"}
+    upd = call_tool(svc, "thesis_update", {"id": t["id"], "assets": [b["id"]]})
+    assert call_tool(svc, "thesis_get", {"id": t["id"]})["assets"][0]["symbol"] == "^GSPC"
+    res = call_tool(svc, "committee_run", {"thesis_id": t["id"], "use_model": False})
+    assert res["material"]["assets"] and not res["deterministic"].get("assets_missing_data")
