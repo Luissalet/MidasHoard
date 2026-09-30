@@ -51,7 +51,7 @@ def test_transaction_rolls_back(tmp_path):
 
 def test_seeded_symbols_cover_every_provider(svc):
     providers = {r["provider"] for r in svc.db.query("SELECT DISTINCT provider FROM symbols")}
-    assert {"stooq", "fred", "ecb", "coingecko", "fake"} <= providers
+    assert {"yahoo", "fred", "ecb", "coingecko", "fake"} <= providers and "stooq" not in providers
     assert svc.counts()["symbols"] >= 40
 
 

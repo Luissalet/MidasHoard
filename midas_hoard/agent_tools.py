@@ -17,7 +17,7 @@ from .strategy import EXAMPLE_SPEC
 MAX_RESULT_BYTES = 20_000
 
 AGENT_INSTRUCTIONS = """Midas's Hoard is a local financial research lab: frozen market data, theses with evidence and invalidation rules, and an honest strategy backtester. Research, not advice: never say buy or sell; give analyses with their uncertainty.
-Flow: market_fetch (a snapshot with provenance) -> thesis_create (needs a rival hypothesis; rules like close(aapl.us) < 150 or yoy(CPIAUCSL) > 4) -> thesis_evidence_add -> thesis_check. Labs: strategy_validate -> backtest_run (holdout_fraction seals a holdout) -> backtest_validate. Every variant is logged; quote the variants count with any metric.
+Flow: market_fetch (a snapshot with provenance) -> thesis_create (needs a rival hypothesis; rules like close(AAPL) < 150 or yoy(CPIAUCSL) > 4) -> thesis_evidence_add -> thesis_check. Labs: strategy_validate -> backtest_run (holdout_fraction seals a holdout) -> backtest_validate. Every variant is logged; quote the variants count with any metric.
 Quote numbers only from tool results. Never merge series of different currency or frequency: convert or resample explicitly. Write tools (fetch, create, update, check, save, run, validate, set) only when the user asks; deletes need confirm=true."""
 
 
@@ -101,8 +101,8 @@ class MarketSearchArgs(BaseModel):
 
 
 class MarketFetchArgs(BaseModel):
-    provider: str = Field(..., max_length=20, description="stooq | fred | ecb | coingecko | yahoo | csv | fake")
-    symbol: str = Field(..., min_length=1, max_length=120, description="stooq aapl.us / ^spx / eurusd; fred CPIAUCSL; ecb EXR/D.USD.EUR.SP00.A; coingecko bitcoin:eur; csv any name.")
+    provider: str = Field(..., max_length=20, description="yahoo | fred | ecb | coingecko | alphavantage | tiingo | csv | fake (stooq is blocked by a browser check)")
+    symbol: str = Field(..., min_length=1, max_length=120, description="yahoo AAPL / ^GSPC / ^IBEX / SAN.MC / EURUSD=X / BTC-EUR; alphavantage IBM; tiingo aapl; fred CPIAUCSL; ecb EXR/D.USD.EUR.SP00.A; coingecko bitcoin:eur; csv any name.")
     start: Optional[str] = Field(None, max_length=10, description="YYYY-MM-DD")
     end: Optional[str] = Field(None, max_length=10, description="YYYY-MM-DD")
     interval: str = Field("d", pattern="^(d|w|m|q|y)$")
@@ -164,9 +164,9 @@ class ThesisCreateArgs(BaseModel):
     rival: str = Field(..., min_length=12, max_length=2000, description="Forced rival hypothesis: the best alternative explanation of the same facts.")
     as_of: Optional[str] = Field(None, max_length=10, description="Knowledge cutoff (default today). Evidence metrics never use data after it.")
     horizon: str = Field("", max_length=12, description="6m, 12m, 2y or a date.")
-    assets: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='["aapl.us"] or [{"symbol","provider","snapshot_id","alias"}]')
+    assets: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='["AAPL"] or [{"symbol","provider","snapshot_id","alias"}]')
     assumptions: Optional[list[str]] = None
-    rules: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='Invalidation rules, true = invalidated: "close(aapl.us) < 150", "yoy(CPIAUCSL) > 4", "drawdown(^spx) < -20", "sma(x,50) < sma(x,200)".')
+    rules: Optional[list[Union[str, dict[str, Any]]]] = Field(None, description='Invalidation rules, true = invalidated: "close(AAPL) < 150", "yoy(CPIAUCSL) > 4", "drawdown(^GSPC) < -20", "sma(x,50) < sma(x,200)".')
     notes: str = Field("", max_length=4000)
 
 
@@ -273,7 +273,7 @@ class PortfolioSetArgs(BaseModel):
     name: str = Field("default", min_length=1, max_length=60)
     action: Literal["set", "delete"] = "set"
     confirm: bool = False
-    holdings: Optional[list[dict[str, Any]]] = Field(None, description='[{"symbol": "aapl.us", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}]')
+    holdings: Optional[list[dict[str, Any]]] = Field(None, description='[{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}]')
     csv_text: Optional[str] = Field(None, max_length=1_000_000, description="CSV with header: symbol,quantity[,snapshot_id,currency,cost_basis,label]")
     path: Optional[str] = Field(None, max_length=1000)
     currency: Optional[str] = Field(None, max_length=3, description="Base currency of the portfolio (default EUR).")
@@ -303,10 +303,10 @@ def run_midas_status(svc: Services, args: Empty) -> dict:
 
 def run_market_providers(svc: Services, args: Empty) -> dict:
     return {"providers": svc.providers.describe(), "offline": svc.http.offline, "cache": svc.http.cache_stats(),
-            "symbol_syntax": {"stooq": "aapl.us, ^spx, eurusd, xauusd", "fred": "CPIAUCSL, UNRATE, DGS10, FEDFUNDS", "ecb": "EXR/D.USD.EUR.SP00.A",
-                              "coingecko": "bitcoin or bitcoin:usd (default eur)", "yahoo": "AAPL, ^GSPC", "csv": "any name; needs path or csv_text and currency/unit",
+            "symbol_syntax": {"yahoo": "AAPL, ^GSPC, ^IBEX, SAN.MC, EURUSD=X, BTC-EUR", "alphavantage": "IBM, SAN.MAD (needs a key)", "tiingo": "aapl, spy (needs a key)", "stooq": "blocked: browser check", "fred": "CPIAUCSL, UNRATE, DGS10, FEDFUNDS", "ecb": "EXR/D.USD.EUR.SP00.A",
+                              "coingecko": "bitcoin or bitcoin:usd (default eur)", "csv": "any name; needs path or csv_text and currency/unit",
                               "fake": "fake.up, fake.down, fake.flat, fake.vol, fakefx.eurusd, fakemacro.cpi"},
-            "credits": "FRED: Federal Reserve Bank of St. Louis. ECB: European Central Bank Data Portal. CoinGecko: data provided by CoinGecko.",
+            "credits": "FRED: Federal Reserve Bank of St. Louis. ECB: European Central Bank Data Portal. CoinGecko: data provided by CoinGecko. Yahoo Finance (unofficial). Alpha Vantage and Tiingo with your own free key.",
             "disclaimer": "Free data; read each provider's terms in the snapshot. Historical analysis, not advice."}
 
 
@@ -461,8 +461,8 @@ TOOLS: list[Tool] = [
          Empty, _ann(True), run_midas_status),
     Tool("market_providers",
          "List data providers with terms, delay and licence. Proveedores de datos de mercado.\n"
-         "stooq, fred, ecb, coingecko, yahoo (unofficial), csv import, fake. Shows symbol syntax, cache and offline state.\n"
-         "Sinónimos: fuentes de datos, términos de uso, retraso, licencia, stooq, FRED, BCE.",
+         "yahoo (unofficial, default), fred, ecb, coingecko, alphavantage and tiingo (need a free key), stooq (blocked by a browser check), csv import, fake. Shows status (ok / needs_key / blocked), symbol syntax, cache and offline state.\n"
+         "Sinónimos: fuentes de datos, términos de uso, retraso, licencia, yahoo, FRED, BCE, clave API.",
          Empty, _ann(True), run_market_providers),
     Tool("market_search",
          "Search symbols (indices, FX, stocks, macro series, crypto). Buscar símbolos y series.\n"
@@ -493,7 +493,7 @@ TOOLS: list[Tool] = [
     Tool("thesis_create",
          "Create an investment thesis with a rival hypothesis and rules. Crear tesis de inversión.\n"
          "Needs title, claim, rival (forced), optional as_of cutoff, horizon, assets, assumptions and machine-checkable invalidation rules "
-         "(close(aapl.us) < 150, yoy(CPIAUCSL) > 4, drawdown(^spx) < -20, sma(x,50) < sma(x,200)); true = invalidated.\n"
+         "(close(AAPL) < 150, yoy(CPIAUCSL) > 4, drawdown(^GSPC) < -20, sma(x,50) < sma(x,200)); true = invalidated.\n"
          "Sinónimos: tesis, hipótesis, dossier de inversión, regla de invalidación, hipótesis rival.",
          ThesisCreateArgs, _ann(False, False, False), run_thesis_create),
     Tool("thesis_get",

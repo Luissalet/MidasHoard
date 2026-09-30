@@ -1,8 +1,8 @@
 """A small, safe expression language for machine-checkable invalidation rules. No ``eval``, no attribute access.
 
-    close(aapl.us) < 150
+    close(AAPL) < 150
     yoy(CPIAUCSL) > 4
-    drawdown(^spx) < -20 and vol(^spx, 20) > 30
+    drawdown(^GSPC) < -20 and vol(^GSPC, 20) > 30
     sma(x, 50) < sma(x, 200)
     cross_below(sma(spy.us, 50), sma(spy.us, 200))
 
@@ -142,7 +142,7 @@ class Parser:
 
     def parse(self) -> Node:
         if not self.toks:
-            raise RuleSyntaxError("Empty expression.", 0, "Write a condition such as close(aapl.us) < 150.")
+            raise RuleSyntaxError("Empty expression.", 0, "Write a condition such as close(AAPL) < 150.")
         node = self.or_(0)
         if self.peek() is not None:
             tok = self.peek()
@@ -414,7 +414,7 @@ class Evaluator:
         name, p = node.name, node.params
         if name in FIELD_FUNCS:
             if node.args[0].kind != "sym":
-                raise MidasError("bad_rule", f"{name}() takes a symbol, got '{node.args[0].src}'.", f"Example: {name}(aapl.us).")
+                raise MidasError("bad_rule", f"{name}() takes a symbol, got '{node.args[0].src}'.", f"Example: {name}(AAPL).")
             return self._series_arg(node.args[0], name)
         if name == "abs":
             v = self.num(node.args[0])
@@ -511,7 +511,7 @@ class Evaluator:
                 ok = (xo & yo) | (xo & xv) | (yo & yv)
             return B(val & ok, ok)
         raise MidasError("bad_rule", f"'{node.src}' is not a condition.",
-                         "A rule must compare something, e.g. close(aapl.us) < 150, or combine comparisons with and/or.")
+                         "A rule must compare something, e.g. close(AAPL) < 150, or combine comparisons with and/or.")
 
     def evaluate(self, src: str) -> dict[str, Any]:
         """Parse and evaluate one rule at the end of the (already sliced) data. Never raises for data problems."""

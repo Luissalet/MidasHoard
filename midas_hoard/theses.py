@@ -114,7 +114,7 @@ class Theses:
                 a = {"symbol": a}
             if not isinstance(a, dict) or not (a.get("symbol") or a.get("snapshot_id")):
                 raise MidasError("invalid_request", f"Each asset needs a symbol or snapshot_id, got {a!r}.",
-                                 "Example: {\"symbol\": \"aapl.us\", \"provider\": \"stooq\"}.")
+                                 "Example: {\"symbol\": \"AAPL\", \"provider\": \"yahoo\"}.")
             item = {k: a[k] for k in ("symbol", "provider", "snapshot_id", "alias", "currency") if a.get(k)}
             if item.get("snapshot_id"):
                 meta = self.store.meta(item["snapshot_id"])
