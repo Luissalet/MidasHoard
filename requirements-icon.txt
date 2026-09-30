@@ -1,3 +1,4 @@
-# Only for scripts/make_icon.py
+# Only for scripts/make_icon.py (regenerating the icon).
 pillow>=11
 numpy>=2
+opencv-python-headless>=4.9
