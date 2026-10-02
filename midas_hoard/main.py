@@ -7,16 +7,15 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.responses import JSONResponse
 
-from . import __version__
+from . import SERVICE, __version__
 from .api import ROUTERS
 from .config import Config
-from .errors import MidasError
-from .guard import install_guard
 from .hoard_link import family
+from .hoard_link.agentkit import format_issues, issues_of
+from .hoard_link.guard import install_guard
+from .hoard_link.service import health_router, install_error_handlers, install_pwa, install_spa
 from .services import Services
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -41,38 +40,25 @@ def create_app(config: Config | None = None, services: Services | None = None) -
     app.state.config = config
     family.configure("midas", str(config.data_dir), token_file=str(config.token_path))
 
-    install_guard(app, config.allowed_hosts)
-
-    @app.exception_handler(MidasError)
-    async def midas_error(_: Request, exc: MidasError):
-        return JSONResponse(exc.to_dict(), status_code=exc.status)
-
-    @app.exception_handler(StarletteHTTPException)
-    async def http_error(_: Request, exc: StarletteHTTPException):
-        return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code)
-
-    @app.exception_handler(RequestValidationError)
-    async def validation_error(_: Request, exc: RequestValidationError):
-        issues = "; ".join(f"{'.'.join(str(p) for p in e['loc'] if p != 'body') or 'input'}: {e['msg']}" for e in exc.errors())
-        return JSONResponse({"error": issues}, status_code=400)
+    install_guard(app, port_getter=lambda: config.port, allowed_env="MIDAS_ALLOWED_HOSTS", allowed_hosts=config.allowed_hosts)
+    install_error_handlers(app)  # MidasError is an AppError: {"error", "code", "hint"?, ...details} with its own status
 
     @app.exception_handler(ValueError)
-    async def value_error(_: Request, exc: ValueError):
-        return JSONResponse({"error": str(exc)}, status_code=400)
+    async def value_error(_: Request, exc: ValueError):  # a bad value in a handler (pydantic's ValidationError is one) is the caller's fault
+        body = {"error": format_issues(exc), "code": "invalid_arguments", "issues": issues_of(exc)} if callable(getattr(exc, "errors", None)) \
+            else {"error": str(exc), "code": "invalid"}
+        return JSONResponse(body, status_code=400)
 
+    def health_extra(request: Request) -> dict:
+        svc = getattr(request.app.state, "services", None)
+        return {"dataDirConfigured": config.data_dir_configured, "offline": svc.http.offline if svc else config.offline,
+                "counts": svc.counts() if svc else {}}
+
+    app.include_router(health_router(SERVICE, __version__, extra=health_extra))
     for router in ROUTERS:
         app.include_router(router)
 
-    @app.get("/{path:path}", include_in_schema=False)
-    async def spa(path: str):
-        if path.startswith("api/"):
-            return JSONResponse({"error": "Not found."}, status_code=404)
-        candidate = (STATIC_DIR / path).resolve() if path else None
-        if candidate and candidate.is_file() and STATIC_DIR.resolve() in candidate.parents:
-            return FileResponse(candidate)
-        index = STATIC_DIR / "index.html"
-        if index.is_file():
-            return FileResponse(index)
-        return JSONResponse({"error": "The client is not built yet: run `npm install && npm run build`."}, status_code=503)
-
+    install_pwa(app, name="Midas's Hoard", short_name="Midas", theme="#5c4400", background="#1a1404", cache="midas-hoard-assets", lang="es",
+                static_dir=STATIC_DIR, version=__version__)
+    install_spa(app, STATIC_DIR)  # last: everything that is not an API route or a real file is the single page app
     return app

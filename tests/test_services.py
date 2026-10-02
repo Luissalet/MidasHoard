@@ -27,10 +27,10 @@ def test_config_from_env(monkeypatch, tmp_path):
 
 def test_database_migrations_are_idempotent_and_wal(tmp_path):
     db = Database(tmp_path / "x.db")
-    v = db.version()
+    v = db.schema_version
     db.close()
     db2 = Database(tmp_path / "x.db")
-    assert db2.version() == v >= 3
+    assert db2.schema_version == v >= 3
     assert db2.one("PRAGMA journal_mode")["journal_mode"].lower() == "wal"
     tables = {r["name"] for r in db2.query("SELECT name FROM sqlite_master WHERE type='table'")}
     assert {"settings", "snapshots", "symbols", "theses", "thesis_evidence", "thesis_checks", "committee_runs", "strategies", "experiments", "portfolios"} <= tables
