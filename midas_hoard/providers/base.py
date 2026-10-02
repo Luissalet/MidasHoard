@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +11,7 @@ import httpx
 import pandas as pd
 
 from ..errors import MidasError
+from ..hoard_link.web.fetch import ApiError, ApiResponse, JsonApiClient
 
 USER_AGENT = "MidasHoard/0.1 (local research tool; single user; +https://github.com/Luissalet)"
 OHLCV = ["open", "high", "low", "close", "volume"]
@@ -80,152 +79,63 @@ class FetchResult:
     cached: bool = False
 
 
-@dataclass
-class HttpResponse:
-    status: int
-    text: str
-    cached: bool
-    fetched_at: float
-    url: str
-    content_type: str = ""
-
-    @property
-    def status_code(self) -> int:
-        return self.status
+HttpResponse = ApiResponse  # what ``HttpClient.get`` returns: ``status``, ``text``, ``cached``, ``fetched_at``, ``url``, ``content_type``, ``headers``
 
 
-class HttpClient:
-    """httpx with timeouts, a polite User-Agent, a small on-disk response cache and clear errors.
+def _tests_resolver(host: str, port: int) -> list[str]:
+    """With an injected transport nothing touches the network, so the host does not need to resolve (tests)."""
+    return ["93.184.216.34"]
 
-    Only successful responses are cached. ``offline`` answers from the cache or fails with
-    ``provider_unavailable`` — tests and airplane mode never touch the network.
-    """
+
+class HttpClient(JsonApiClient):
+    """The shared Hoard Link JSON API client (identifying User-Agent, on-disk cache, stale-if-error, retry on network errors and
+    5xx, ``Retry-After``, offline switch) with Midas's errors: every failure is a :class:`MidasError` that names the provider.
+
+    Only successful, non-HTML responses are cached. ``offline`` answers from the cache or fails with ``provider_unavailable``
+    and can be flipped while the app runs (the Settings switch)."""
 
     def __init__(self, cache_dir: Path, *, timeout: float = 20.0, ttl: int = 6 * 3600, offline: bool = False,
                  transport: Optional[httpx.BaseTransport] = None, sleep: Callable[[float], None] = time.sleep,
-                 clock: Callable[[], float] = time.time):
-        self.cache_dir = Path(cache_dir) / "http"
-        self.timeout = timeout
-        self.ttl = ttl
-        self.offline = offline
-        self.transport = transport
-        self.sleep = sleep
+                 clock: Callable[[], float] = time.time, resolver: Optional[Callable[[str, int], Any]] = None):
         self.clock = clock
-        self._client: Optional[httpx.Client] = None
-        self.hits = 0
-        self.misses = 0
+        self.sleep = sleep
+        super().__init__(user_agent=USER_AGENT, ttl=ttl, offline=offline, retries=1, cache_dir=cache_dir, timeout_s=timeout,
+                         transport=transport, clock=clock, sleep=sleep, resolver=resolver or (_tests_resolver if transport is not None else None))
 
-    # -- cache ------------------------------------------------------------
-    def _key(self, url: str, params: Optional[dict[str, Any]]) -> str:
-        canon = url + "?" + "&".join(f"{k}={params[k]}" for k in sorted(params or {}))
-        return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+    @property
+    def offline(self) -> bool:
+        return self._offline
 
-    def _path(self, key: str) -> Path:
-        return self.cache_dir / key[:2] / f"{key}.json"
-
-    def _read_cache(self, key: str, ttl: int, allow_stale: bool) -> Optional[dict[str, Any]]:
-        path = self._path(key)
-        try:
-            entry = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        if allow_stale or self.clock() - float(entry.get("fetched_at", 0)) <= ttl:
-            return entry
-        return None
-
-    def _write_cache(self, key: str, url: str, status: int, text: str, fetched_at: float, content_type: str = "") -> None:
-        path = self._path(key)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps({"url": url, "status": status, "text": text, "fetched_at": fetched_at, "content_type": content_type}), encoding="utf-8")
-        except OSError:
-            pass
-
-    def cache_stats(self) -> dict[str, Any]:
-        files = list(self.cache_dir.glob("*/*.json")) if self.cache_dir.is_dir() else []
-        size = 0
-        for f in files:
-            try:
-                size += f.stat().st_size
-            except OSError:
-                pass
-        return {"entries": len(files), "bytes": size, "ttl_s": self.ttl, "hits": self.hits, "misses": self.misses,
-                "dir": str(self.cache_dir)}
-
-    def clear_cache(self) -> int:
-        removed = 0
-        for f in list(self.cache_dir.glob("*/*.json")) if self.cache_dir.is_dir() else []:
-            try:
-                f.unlink()
-                removed += 1
-            except OSError:
-                pass
-        return removed
-
-    # -- requests ---------------------------------------------------------
-    def _http(self) -> httpx.Client:
-        if self._client is None:
-            self._client = httpx.Client(timeout=self.timeout, follow_redirects=True, transport=self.transport,
-                                        headers={"User-Agent": USER_AGENT})
-        return self._client
-
-    def close(self) -> None:
-        if self._client is not None:
-            self._client.close()
-            self._client = None
+    @offline.setter
+    def offline(self, value: bool) -> None:
+        self._offline = bool(value)
+        fetcher = self.__dict__.get("_fetcher")
+        if fetcher is not None:
+            fetcher.offline = self._offline
 
     def get(self, url: str, params: Optional[dict[str, Any]] = None, *, ttl: Optional[int] = None, provider: str = "",
-            use_cache: bool = True, headers: Optional[dict[str, str]] = None) -> HttpResponse:
-        ttl = self.ttl if ttl is None else ttl
-        key = self._key(url, params)
-        if use_cache and ttl > 0:
-            entry = self._read_cache(key, ttl, allow_stale=False)
-            if entry:
-                self.hits += 1
-                return HttpResponse(int(entry["status"]), entry["text"], True, float(entry["fetched_at"]), url, entry.get("content_type", ""))
-        if self.offline:
-            entry = self._read_cache(key, ttl, allow_stale=True)
-            if entry:
-                self.hits += 1
-                return HttpResponse(int(entry["status"]), entry["text"], True, float(entry["fetched_at"]), url, entry.get("content_type", ""))
-            raise MidasError("provider_unavailable", f"{provider or 'provider'}: offline mode, nothing cached for this request.",
-                             "Unset MIDAS_OFFLINE to allow network access, or use the csv/fake providers.", provider=provider)
-        self.misses += 1
-        last_error = ""
-        for attempt in range(2):
-            try:
-                response = self._http().get(url, params=params, headers=headers)
-            except httpx.HTTPError as error:
-                last_error = f"{type(error).__name__}: {error}"
-                if attempt == 0:
-                    self.sleep(0.6)
-                    continue
-                stale = self._read_cache(key, ttl, allow_stale=True)
-                if stale:
-                    return HttpResponse(int(stale["status"]), stale["text"], True, float(stale["fetched_at"]), url, stale.get("content_type", ""))
-                raise MidasError("provider_unavailable", f"{provider or 'provider'} could not be reached ({last_error}).",
-                                 "Check the connection; cached responses are used when present.", provider=provider) from error
-            if response.status_code == 429:
-                retry = response.headers.get("retry-after", "")
-                raise MidasError("rate_limited", f"{provider or 'provider'} rate limit reached.",
-                                 f"Wait {retry + ' s' if retry else 'a minute'} and retry; cached data is reused for {self.ttl // 3600} h.",
-                                 provider=provider, retry_after=retry or None)
-            if response.status_code >= 500:
-                last_error = f"HTTP {response.status_code}"
-                if attempt == 0:
-                    self.sleep(0.6)
-                    continue
-                stale = self._read_cache(key, ttl, allow_stale=True)
-                if stale:
-                    return HttpResponse(int(stale["status"]), stale["text"], True, float(stale["fetched_at"]), url, stale.get("content_type", ""))
-                raise MidasError("provider_unavailable", f"{provider or 'provider'} answered {last_error}.", "Try again later.",
-                                 provider=provider)
-            now = self.clock()
-            ctype = response.headers.get("content-type", "")
-            if response.status_code == 200 and "text/html" not in ctype.lower():
-                self._write_cache(key, url, 200, response.text, now, ctype)  # challenge pages are never cached
-            return HttpResponse(response.status_code, response.text, False, now, url, ctype)
-        raise MidasError("provider_unavailable", f"{provider or 'provider'}: {last_error}", provider=provider)  # pragma: no cover
+            use_cache: bool = True, headers: Optional[dict[str, str]] = None) -> ApiResponse:
+        who = provider or "provider"
+        try:
+            return super().get(url, params, ttl=ttl, use_cache=use_cache, headers=headers, label=who)
+        except ApiError as error:
+            raise self._as_midas(error, who, provider) from error
+
+    def _as_midas(self, error: ApiError, who: str, provider: str) -> MidasError:
+        if error.kind == "offline":
+            return MidasError("provider_unavailable", f"{who}: offline mode, nothing cached for this request.",
+                              "Unset MIDAS_OFFLINE to allow network access, or use the csv/fake providers.", provider=provider)
+        if error.kind == "rate_limited":
+            retry = error.retry_after or ""
+            return MidasError("rate_limited", f"{who} rate limit reached.",
+                              f"Wait {retry + ' s' if retry else 'a minute'} and retry; cached data is reused for {int(self.ttl) // 3600} h.",
+                              provider=provider, retry_after=retry or None)
+        if error.kind == "unreachable":
+            return MidasError("provider_unavailable", str(error), "Check the connection; cached responses are used when present.", provider=provider)
+        if error.kind == "server_error":
+            return MidasError("provider_unavailable", str(error), "Try again later.", provider=provider)
+        return MidasError("provider_unavailable", str(error), "The provider refused the request (a browser check or a block); try again later.",
+                          provider=provider)
 
 
 class Provider:

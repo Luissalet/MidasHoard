@@ -13,6 +13,8 @@ import math
 import re
 from typing import Any, Iterable, Optional
 
+from .hoard_link import money
+
 ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 EVIDENCE_LABEL = re.compile(r"\bE\d+\b")
 LIST_MARKER = re.compile(r"(?m)^\s*\d+[.)]\s+")
@@ -22,14 +24,15 @@ UNIT_AFTER = re.compile(r"^\s?(%|bps|bp|pp|x|×|k\b|m\b|bn\b|b\b)", re.I)
 
 
 def _to_float(raw: str) -> tuple[float, int]:
-    """Numeric value and the number of decimals written."""
-    text = raw.replace("−", "-")
-    if re.fullmatch(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?", text):
-        text = text.replace(",", "")
-    elif re.fullmatch(r"\d+,\d{1,2}", text):
-        text = text.replace(",", ".")
-    decimals = len(text.split(".")[1]) if "." in text else 0
-    return float(text), decimals
+    """Numeric value and the number of decimals written, read with the shared amount parser (dot-decimal context: market text
+    writes ``1.085`` for an exchange rate and ``1,250`` for a thousand). ``ValueError`` when it is not a number."""
+    value = money.parse_amount(raw.replace("\u2212", "-"), lang="en")
+    if value is None:
+        raise ValueError(raw)
+    number = float(value)
+    digits = len(re.sub(r"\D", "", raw))
+    integer_digits = len(str(int(abs(number)))) if abs(number) >= 1 else 1
+    return number, max(0, digits - integer_digits)  # digits written beyond the integer part: "12.50" -> 2, "1,250" -> 0
 
 
 def extract_numbers(text: str) -> list[dict[str, Any]]:
