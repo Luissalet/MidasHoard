@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,6 +21,8 @@ from .committee import Committee, build_pack
 from .config import Config
 from .db import Database
 from .errors import MidasError
+from .hoard_link import tokens
+from .hoard_link.atomic import write_json_atomic, write_text_atomic
 from .hoard_link.config import LinkConfig
 from .lab import Lab
 from .portfolio import Portfolios
@@ -35,35 +36,6 @@ log = logging.getLogger("midas")
 DISCLAIMER = reports_mod.DISCLAIMER
 
 
-def write_token(config: Config) -> str:
-    """The MCP token is persistent: created once, reused on every later start.
-
-    Rotating it on each start would break a bridge (or a second, port-clashing instance would break the running one)
-    the moment the file changed.
-    """
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        existing = config.token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        existing = ""
-    if len(existing) >= 32:
-        return existing
-    token = secrets.token_hex(32)
-    config.token_path.write_text(token, encoding="utf-8")
-    try:
-        config.token_path.chmod(0o600)
-    except OSError:
-        pass
-    return token
-
-
-def write_url(config: Config) -> None:
-    try:
-        config.url_path.write_text(f"http://127.0.0.1:{config.port}", encoding="utf-8")
-    except OSError:
-        pass
-
-
 class Services:
     def __init__(self, config: Config, *, link: Any = None, http_transport: Optional[httpx.BaseTransport] = None,
                  clock_fn: Callable[[], float] = time.time, sleep_fn: Callable[[float], None] = time.sleep):
@@ -72,10 +44,13 @@ class Services:
         self.started_at = time.time()
         for d in (config.data_dir, config.snapshots_dir, config.runs_dir, config.reports_dir, config.cache_dir):
             d.mkdir(parents=True, exist_ok=True)
-        self.token = write_token(config)
-        write_url(config)
+        self.token = tokens.read_or_create_token(config.token_path)  # stable across restarts: the bridge keeps working
+        try:
+            tokens.write_url(config.url_path, f"http://127.0.0.1:{config.port}")
+        except OSError:
+            pass
         self.db = Database(config.db_path)
-        offline = config.offline or self.db.get_setting("offline", "0") == "1"
+        offline = config.offline or self._truthy(self.db.get_setting("offline", False))
         self.http = HttpClient(config.cache_dir, timeout=config.http_timeout_s, ttl=config.cache_ttl_s, offline=offline,
                                transport=http_transport, sleep=sleep_fn, clock=clock_fn)
         self.providers = Registry(self.http, keys=self._provider_key, coingecko={"clock": clock_fn, "sleep": sleep_fn})
@@ -99,7 +74,25 @@ class Services:
     def _provider_key(self, provider_id: str) -> str:
         """API key for a keyed provider: the environment wins, then the write-only value saved from Settings."""
         env = os.environ.get(f"MIDAS_{provider_id.upper()}_KEY", "").strip()
-        return env or (self.db.get_setting(f"secret.{provider_id}", "") or "").strip()
+        return env or self._text_setting(f"secret.{provider_id}").strip()
+
+    @staticmethod
+    def _truthy(value: Any) -> bool:
+        """A flag stored as ``1``/``"1"``/``true`` (older versions wrote the text ``1``)."""
+        return value is True or str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    def _text_setting(self, key: str, default: str = "") -> str:
+        """A text setting exactly as it was written, also when the text looks like a number (an API key made of digits)."""
+        row = self.db.one("SELECT value FROM settings WHERE key = ?", (key,))
+        if row is None:
+            return default
+        raw = row["value"]
+        if raw.startswith('"'):
+            try:
+                return str(json.loads(raw))
+            except ValueError:
+                pass
+        return raw
 
     def _keys_status(self) -> dict[str, Any]:
         """Never the value: only whether a key exists, where it comes from and its last four characters."""
@@ -287,10 +280,10 @@ class Services:
             base = self.config.reports_dir / f"{kind}-{ident}"
             if fmt == "json":
                 path = base.with_suffix(".json")
-                path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+                write_json_atomic(path, json.loads(json.dumps(data, default=str)))
             else:
                 path = base.with_suffix(".md")
-                path.write_text(markdown, encoding="utf-8")
+                write_text_atomic(path, markdown)
         return {"kind": kind, "id": ident, "format": fmt, "markdown": markdown, "json": data if fmt == "json" else None, "path": str(path) if path else None,
                 "generated_at": reports_mod.now_iso(), "disclaimer": DISCLAIMER}
 
@@ -302,18 +295,18 @@ class Services:
                 backend = json.loads(self.config.backend_json_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 backend = {}
-        return {"backend": backend, "language": self.db.get_setting("language", "es"), "offline": self.http.offline,
+        return {"backend": backend, "language": self._text_setting("language", "es"), "offline": self.http.offline,
                 "cache": self.http.cache_stats(), "data_dir": str(self.config.data_dir),
                 "keys": self._keys_status()}
 
     def update_settings(self, patch: dict[str, Any]) -> dict[str, Any]:
         if patch.get("backend") is not None:
-            self.config.backend_json_path.write_text(json.dumps(patch["backend"], indent=2), encoding="utf-8")
+            write_json_atomic(self.config.backend_json_path, patch["backend"], indent=2)
         if patch.get("language") in ("en", "es"):
             self.db.set_setting("language", patch["language"])
         if "offline" in patch:
             self.http.offline = bool(patch["offline"])
-            self.db.set_setting("offline", "1" if patch["offline"] else "0")
+            self.db.set_setting("offline", bool(patch["offline"]))
         for pid, value in (patch.get("keys") or {}).items():
             prov = self.providers.get(pid)
             if not prov.needs_key:
@@ -339,7 +332,7 @@ class Services:
         def size(path: Path) -> int:
             return sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.is_dir() else 0
 
-        return {"service": SERVICE, "version": __version__, "data_dir": str(self.config.data_dir), "schema_version": self.db.version(),
+        return {"service": SERVICE, "version": __version__, "data_dir": str(self.config.data_dir), "schema_version": self.db.schema_version,
                 "started_at": self.started_at, "now": self.clock(), "counts": self.counts(), "theses_by_status": self.theses.counts(),
                 "providers": self.providers.describe(), "offline": self.http.offline, "cache": self.http.cache_stats(),
                 "disk": {"snapshots_bytes": size(self.config.snapshots_dir), "runs_bytes": size(self.config.runs_dir)},

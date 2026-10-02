@@ -21,6 +21,7 @@ import pandas as pd
 
 from .db import Database
 from .errors import MidasError
+from .hoard_link.atomic import write_text_atomic
 from .providers.base import OHLCV, FetchResult, Provider
 
 
@@ -84,7 +85,7 @@ class SnapshotStore:
             return self.meta(existing["id"]), False
         sid = "snp_" + uuid.uuid4().hex[:10]
         text = canonical_csv(df)
-        (self.dir / f"{sid}.csv").write_text(text, encoding="utf-8", newline="")
+        write_text_atomic(self.dir / f"{sid}.csv", text)  # a frozen snapshot is never half written (its sha256 is its identity)
         now = self.clock()
         self.db.execute(
             "INSERT INTO snapshots(id, provider, symbol, provider_symbol, label, kind, fetched_at, req_start, req_end, actual_start, "

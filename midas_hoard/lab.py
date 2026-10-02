@@ -22,11 +22,17 @@ from . import validation as val
 from .backtest import BacktestOutput, prepare_universe, run_backtest
 from .db import Database
 from .errors import MidasError
+from .hoard_link.atomic import write_json_atomic, write_text_atomic
 from .hoard_link.artifacts import ArtifactRef
 from .snapshots import Snapshot, SnapshotStore, provenance
 from .strategy import spec_hash, validate_spec
 
 METHODS = ("walk_forward", "permutation", "bootstrap", "multiple_testing")
+
+
+def _plain(doc: Any) -> Any:
+    """The document with anything JSON cannot hold (numpy numbers, timestamps) written as text, as before."""
+    return json.loads(json.dumps(doc, default=str))
 
 
 class Lab:
@@ -263,17 +269,16 @@ class Lab:
     def _write_artifacts(self, run_id: str, n: dict[str, Any], out: BacktestOutput, doc: dict[str, Any]) -> Path:
         d = self.runs_dir / run_id
         d.mkdir(parents=True, exist_ok=True)
-        (d / "spec.json").write_text(json.dumps(n, indent=2, sort_keys=True), encoding="utf-8")
-        (d / "snapshots.json").write_text(json.dumps(doc["snapshots"], indent=2), encoding="utf-8")
-        (d / "metrics.json").write_text(json.dumps({k: doc[k] for k in ("metrics", "benchmark", "window", "variants", "multiple_testing", "holdout", "conversions", "warnings")},
-                                                   indent=2, default=str), encoding="utf-8")
+        write_json_atomic(d / "spec.json", n, sort_keys=True)
+        write_json_atomic(d / "snapshots.json", doc["snapshots"])
+        write_json_atomic(d / "metrics.json", _plain({k: doc[k] for k in ("metrics", "benchmark", "window", "variants", "multiple_testing", "holdout", "conversions", "warnings")}))
         out.equity.to_csv(d / "equity.csv", index_label="date", float_format="%.8g")
         with open(d / "trades.csv", "w", encoding="utf-8", newline="") as fh:
             cols = ["asset", "snapshot", "side", "entry_date", "entry_price", "exit_date", "exit_price", "weight", "bars", "return", "gross_return", "open"]
             writer = csv.DictWriter(fh, fieldnames=cols)
             writer.writeheader()
             writer.writerows(out.trades)
-        (d / "report.md").write_text(reports_mod.run_markdown(doc), encoding="utf-8")
+        write_text_atomic(d / "report.md", reports_mod.run_markdown(doc))
         return d
 
     # ------------------------------------------------------------- read run
@@ -378,5 +383,5 @@ class Lab:
                "variants": {"family": spec["family"], "tried": self.family_stats(spec["family"])["variants"]}, "disclaimer": reports_mod.DISCLAIMER}
         d = self.runs_dir / run_id
         d.mkdir(parents=True, exist_ok=True)
-        (d / f"validation-{vid}.json").write_text(json.dumps(doc, indent=2, default=str), encoding="utf-8")
+        write_json_atomic(d / f"validation-{vid}.json", _plain(doc))
         return doc
