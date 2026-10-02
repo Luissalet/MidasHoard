@@ -29,7 +29,7 @@ A local market-research lab for one person. It freezes market data into snapshot
 
 API keys entered in Settings are write-only: they are stored locally and the API only reports `configured` and the last four characters. Providers show as `ok`, `needs_key` or `blocked` in the Sources page and in `market_providers`.
 
-Responses are cached on disk; `MIDAS_OFFLINE=1` answers only from the cache. Read each provider's terms, shown with every snapshot.
+Responses are cached on disk by the shared Hoard Link JSON API client (identifying User-Agent, one retry on network errors and server errors, a stale copy when the provider is down, `Retry-After` on rate limits, public addresses only); `MIDAS_OFFLINE=1` (or the Settings switch) answers only from the cache. Read each provider's terms, shown with every snapshot.
 
 ## Run it
 
@@ -40,11 +40,11 @@ python -m midas_hoard            # http://127.0.0.1:5192
 
 The client is built and committed under `midas_hoard/static`; rebuild it with `npm install && npm run build`. `python scripts/launch.py` picks a free port and opens the browser; `python scripts/dev.py` runs the API with reload plus the Vite dev server.
 
-Settings come from the environment: `MIDAS_DATA_DIR` (default `./data`), `MIDAS_PORT` (5192), `PORT_STRICT`, `MIDAS_ALLOWED_HOSTS`, `MIDAS_HTTP_TIMEOUT_S`, `MIDAS_CACHE_TTL_S`, `MIDAS_OFFLINE`. Data lives in `data/midas.db` (SQLite, WAL) plus `data/snapshots`, `data/runs` and `data/reports`.
+Settings come from the environment: `MIDAS_DATA_DIR` (default `./data`), `MIDAS_PORT` (5192), `PORT_STRICT`, `MIDAS_ALLOWED_HOSTS`, `MIDAS_HTTP_TIMEOUT_S`, `MIDAS_CACHE_TTL_S`, `MIDAS_OFFLINE`. Data lives in `data/midas.db` (SQLite, WAL) plus `data/snapshots`, `data/runs` and `data/reports`; files are written atomically. The launcher, request guard, error envelope, stable `mcp-token`, SQLite layer, agent catalogue (20 KB result cap) and MCP bridge are the shared commons of Hoard Link (`midas_hoard/hoard_link/`); a second `python -m midas_hoard` on the same port exits instead of starting another copy.
 
 ## Assistant tools (MCP)
 
-`mcp_server.py` is a stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 23 tools:
+`mcp_server.py` is the shared Hoard Link stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 23 tools:
 
 ### Market data
 

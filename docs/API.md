@@ -1,6 +1,6 @@
 # API reference
 
-Base URL `http://127.0.0.1:5192`. Every body is JSON. Errors are `{"error", "code", "hint"}` with the HTTP status of the code (`not_found` 404, `symbol_not_found` 404, `rate_limited` 429, `provider_unavailable` 502, everything else 400). Requests must carry a local `Host`; the guard refuses foreign hosts and cross-site requests.
+Base URL `http://127.0.0.1:5192`. Every body is JSON. Errors are `{"error", "code", "hint"?}` (one envelope for the whole app; request validation adds `issues`) with the HTTP status of the code (`not_found` 404, `symbol_not_found` 404, `rate_limited` 429, `provider_unavailable` 502, everything else 400). Requests must carry a local `Host`; the guard refuses foreign hosts and cross-site requests.
 
 ## Health
 

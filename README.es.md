@@ -40,11 +40,11 @@ python -m midas_hoard            # http://127.0.0.1:5192
 
 El cliente está compilado y versionado en `midas_hoard/static`; para recompilarlo, `npm install && npm run build`. `python scripts/launch.py` busca un puerto libre y abre el navegador; `python scripts/dev.py` arranca la API con recarga y el servidor de desarrollo de Vite.
 
-La configuración va por variables de entorno: `MIDAS_DATA_DIR` (por defecto `./data`), `MIDAS_PORT` (5192), `PORT_STRICT`, `MIDAS_ALLOWED_HOSTS`, `MIDAS_HTTP_TIMEOUT_S`, `MIDAS_CACHE_TTL_S`, `MIDAS_OFFLINE`. Los datos viven en `data/midas.db` (SQLite, WAL) y en `data/snapshots`, `data/runs` y `data/reports`.
+La configuración va por variables de entorno: `MIDAS_DATA_DIR` (por defecto `./data`), `MIDAS_PORT` (5192), `PORT_STRICT`, `MIDAS_ALLOWED_HOSTS`, `MIDAS_HTTP_TIMEOUT_S`, `MIDAS_CACHE_TTL_S`, `MIDAS_OFFLINE`. Los datos viven en `data/midas.db` (SQLite, WAL) y en `data/snapshots`, `data/runs` y `data/reports`; los archivos se escriben de forma atómica. El lanzador, el guardián de peticiones, el formato de errores, el `mcp-token` estable, la capa SQLite, el catálogo del agente (límite de 20 KB), el cliente HTTP de las fuentes de datos y el puente MCP son las librerías comunes de Hoard Link (`midas_hoard/hoard_link/`); un segundo `python -m midas_hoard` en el mismo puerto termina en lugar de arrancar otra copia.
 
 ## Herramientas para asistentes (MCP)
 
-`mcp_server.py` es un puente stdio. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 23 herramientas:
+`mcp_server.py` es el puente stdio compartido de Hoard Link. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 23 herramientas:
 
 ### Datos de mercado
 
