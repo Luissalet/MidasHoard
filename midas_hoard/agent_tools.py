@@ -2,94 +2,25 @@
 
 from __future__ import annotations
 
-import contextlib
-import contextvars
 import json
-from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, Field
 
 from .errors import MidasError
+from .hoard_link import agentkit
+from .hoard_link.agentkit import MAX_RESULT_BYTES, Empty, Tool, ann as _ann, cap_result, uncapped  # noqa: F401  (uncapped: the web UI's way out of the cap)
 from .services import Services
 from .strategy import EXAMPLE_SPEC
-
-MAX_RESULT_BYTES = 20_000
 
 AGENT_INSTRUCTIONS = """Midas's Hoard is a local financial research lab: frozen market data, theses with evidence and invalidation rules, and an honest strategy backtester. Research, not advice: never say buy or sell; give analyses with their uncertainty.
 Flow: market_fetch (a snapshot with provenance) -> thesis_create (needs a rival hypothesis; rules like close(AAPL) < 150 or yoy(CPIAUCSL) > 4) -> thesis_evidence_add -> thesis_check. Labs: strategy_validate -> backtest_run (holdout_fraction seals a holdout) -> backtest_validate. Every variant is logged; quote the variants count with any metric.
 Quote numbers only from tool results. Never merge series of different currency or frequency: convert or resample explicitly. Write tools (fetch, create, update, check, save, run, validate, set) only when the user asks; deletes need confirm=true."""
 
 
-@dataclass(frozen=True)
-class Tool:
-    name: str
-    description: str
-    input_model: type[BaseModel]
-    annotations: dict[str, bool]
-    run: Callable[[Services, Any], Any]
-
-
-def _ann(read_only: bool, destructive: bool = False, idempotent: Optional[bool] = None, open_world: bool = False) -> dict[str, bool]:
-    return {"readOnlyHint": read_only, "destructiveHint": destructive, "idempotentHint": read_only if idempotent is None else idempotent, "openWorldHint": open_world}
-
-
-_UNCAPPED: contextvars.ContextVar[bool] = contextvars.ContextVar("midas_uncapped", default=False)
-
-
-@contextlib.contextmanager
-def uncapped():
-    """The web UI shares the tool handlers but is not bound by the assistant's context budget."""
-    token = _UNCAPPED.set(True)
-    try:
-        yield
-    finally:
-        _UNCAPPED.reset(token)
-
-
-def cap_result(data: dict[str, Any], limit: int = MAX_RESULT_BYTES) -> dict[str, Any]:
-    """Keep a result under ~20 KB: halve the largest list until it fits, and say what was cut."""
-    if _UNCAPPED.get():
-        return data
-    def size(d: Any) -> int:
-        return len(json.dumps(d, default=str, ensure_ascii=False).encode("utf-8"))
-
-    if size(data) <= limit:
-        return data
-    data = dict(data)
-    truncated: dict[str, Any] = {}
-    for _ in range(40):
-        if size(data) <= limit - 300:
-            break
-        candidates = [(k, v) for k, v in data.items() if isinstance(v, list) and len(v) > 1]
-        nested = []
-        for k, v in data.items():
-            if isinstance(v, dict):
-                nested += [((k, k2), v2) for k2, v2 in v.items() if isinstance(v2, list) and len(v2) > 1]
-        if not candidates and not nested:
-            break
-        best_top = max(candidates, key=lambda kv: size(kv[1]), default=None)
-        best_nested = max(nested, key=lambda kv: size(kv[1]), default=None)
-        if best_top and (not best_nested or size(best_top[1]) >= size(best_nested[1])):
-            key, value = best_top
-            truncated.setdefault(key, len(value))
-            data[key] = value[: max(1, len(value) // 2)]
-        else:
-            (k1, k2), value = best_nested
-            truncated.setdefault(f"{k1}.{k2}", len(value))
-            data[k1] = {**data[k1], k2: value[: max(1, len(value) // 2)]}
-    data["truncated"] = {"reason": f"result capped at ~{limit // 1000} KB", "original_lengths": {str(k): v for k, v in truncated.items()},
-                         "hint": "Use limit/cursor (or narrower ranges) to page through the rest."}
-    return data
-
-
 def _confirm(action: str, confirm: bool, what: str) -> None:
     if action == "delete" and not confirm:
         raise MidasError("confirm_required", f"Deleting {what} is permanent.", "Repeat the call with confirm=true if the user asked for it.")
-
-
-class Empty(BaseModel):
-    pass
 
 
 # ------------------------------------------------------------------ market
@@ -325,20 +256,20 @@ def run_market_series(svc: Services, args: SeriesArgs) -> dict:
     p = args.model_dump()
     sid, fx = p.pop("snapshot_id"), p.pop("fx")
     p["vol_window"] = p["vol_window"] or None
-    return cap_result(svc.market_series(sid, fx=fx, **p))
+    return svc.market_series(sid, fx=fx, **p)
 
 
 def run_market_compare(svc: Services, args: CompareArgs) -> dict:
     p = args.model_dump()
     ids, fx = p.pop("snapshot_ids"), p.pop("fx")
-    return cap_result(svc.market_compare(ids, fx=fx, **p))
+    return svc.market_compare(ids, fx=fx, **p)
 
 
 def run_snapshots_list(svc: Services, args: SnapshotsListArgs) -> dict:
     res = svc.snapshots_list(provider=args.provider, symbol=args.symbol, query=args.query, limit=args.limit, offset=args.cursor or 0)
     off = args.cursor or 0
     res["next_cursor"] = off + args.limit if off + args.limit < res["total"] else None
-    return cap_result(res)
+    return res
 
 
 def run_thesis_create(svc: Services, args: ThesisCreateArgs) -> dict:
@@ -351,11 +282,11 @@ def run_thesis_get(svc: Services, args: ThesisGetArgs) -> dict:
     if args.history:
         t["checks"] = svc.theses.checks(args.id)
     t["committee"] = svc.committee.history(args.id, limit=5)
-    return cap_result(t)
+    return t
 
 
 def run_thesis_list(svc: Services, args: ThesisListArgs) -> dict:
-    return cap_result(svc.theses.list(status=args.status, query=args.query, limit=args.limit, cursor=args.cursor))
+    return svc.theses.list(status=args.status, query=args.query, limit=args.limit, cursor=args.cursor)
 
 
 def run_thesis_update(svc: Services, args: ThesisUpdateArgs) -> dict:
@@ -363,7 +294,7 @@ def run_thesis_update(svc: Services, args: ThesisUpdateArgs) -> dict:
         _confirm("delete", args.confirm, f"thesis {args.id} with its evidence, checks and committee runs")
         return svc.theses.delete(args.id)
     patch = {k: v for k, v in args.model_dump().items() if k not in ("id", "action", "confirm") and v is not None}
-    return cap_result(svc.theses.update(args.id, patch))
+    return svc.theses.update(args.id, patch)
 
 
 def run_thesis_evidence(svc: Services, args: EvidenceArgs) -> dict:
@@ -379,7 +310,7 @@ def run_thesis_evidence(svc: Services, args: EvidenceArgs) -> dict:
 
 
 def run_thesis_check(svc: Services, args: CheckArgs) -> dict:
-    return cap_result(svc.theses.check(args.id, as_of=args.as_of, refresh=args.refresh))
+    return svc.theses.check(args.id, as_of=args.as_of, refresh=args.refresh)
 
 
 def run_strategy_validate(svc: Services, args: SpecArgs) -> dict:
@@ -403,27 +334,27 @@ def run_strategies_list(svc: Services, args: StrategiesListArgs) -> dict:
     items = svc.lab.strategies()
     for i in items:
         i.pop("spec", None)
-    return cap_result({"strategies": items, "count": len(items)})
+    return {"strategies": items, "count": len(items)}
 
 
 def run_backtest_run(svc: Services, args: BacktestRunArgs) -> dict:
-    return cap_result(svc.lab.run(spec=args.spec, strategy=args.strategy, as_of=args.as_of, holdout_fraction=args.holdout_fraction,
-                                  split_date=args.split_date, label=args.label))
+    return svc.lab.run(spec=args.spec, strategy=args.strategy, as_of=args.as_of, holdout_fraction=args.holdout_fraction,
+    split_date=args.split_date, label=args.label)
 
 
 def run_backtest_validate(svc: Services, args: BacktestValidateArgs) -> dict:
-    return cap_result(svc.lab.validate_run(args.run_id, methods=args.methods, windows=args.windows, grid=args.grid, n=args.n, block=args.block,
-                                           seed=args.seed, reveal_holdout=args.reveal_holdout))
+    return svc.lab.validate_run(args.run_id, methods=args.methods, windows=args.windows, grid=args.grid, n=args.n, block=args.block,
+    seed=args.seed, reveal_holdout=args.reveal_holdout)
 
 
 def run_experiments_list(svc: Services, args: ExperimentsArgs) -> dict:
     if args.run_id:
-        return cap_result(svc.lab.run_get(args.run_id, cursor=args.cursor))
-    return cap_result(svc.lab.experiments(family=args.family, kind=args.kind, status=args.status, limit=args.limit, cursor=args.cursor))
+        return svc.lab.run_get(args.run_id, cursor=args.cursor)
+    return svc.lab.experiments(family=args.family, kind=args.kind, status=args.status, limit=args.limit, cursor=args.cursor)
 
 
 def run_committee(svc: Services, args: CommitteeArgs) -> dict:
-    return cap_result(svc.committee.run(args.thesis_id, use_model=args.use_model))
+    return svc.committee.run(args.thesis_id, use_model=args.use_model)
 
 
 def run_portfolio_set(svc: Services, args: PortfolioSetArgs) -> dict:
@@ -436,7 +367,7 @@ def run_portfolio_set(svc: Services, args: PortfolioSetArgs) -> dict:
 def run_portfolio_analyze(svc: Services, args: PortfolioAnalyzeArgs) -> dict:
     if not args.name:
         return {"portfolios": svc.portfolios.list()}
-    return cap_result(svc.portfolios.analyze(args.name, date=args.date, currency=args.currency, fx=args.fx))
+    return svc.portfolios.analyze(args.name, date=args.date, currency=args.currency, fx=args.fx)
 
 
 def run_report_export(svc: Services, args: ReportArgs) -> dict:
@@ -581,19 +512,10 @@ TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 
 
 def tool_catalog() -> list[dict]:
-    return [
-        {"name": t.name, "description": t.description, "annotations": t.annotations,
-         "inputSchema": t.input_model.model_json_schema(by_alias=True)}
-        for t in TOOLS
-    ]
+    return agentkit.tool_catalog(TOOLS)
 
 
-def call_tool(services: Services, name: str, arguments: dict | None) -> Any:
-    tool = TOOLS_BY_NAME.get(name)
-    if tool is None:
-        raise KeyError(f"Unknown tool: {name}")
-    args = tool.input_model.model_validate(arguments or {})
-    result = tool.run(services, args)
-    if not isinstance(result, dict):
-        result = {"result": result}
-    return result
+def call_tool(services: Services, name: str, arguments: dict | None, *, cap: bool = True) -> Any:
+    """Run one tool by name. The result is capped to ~20 KB (the shared Hoard Link cap) unless ``cap=False`` or inside
+    ``with uncapped():`` (the web UI). ``KeyError`` (an ``UnknownTool``) for an unknown name."""
+    return agentkit.call_tool(TOOLS_BY_NAME, services, name, arguments, cap=cap)
