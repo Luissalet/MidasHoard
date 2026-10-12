@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { Chip, ErrorBox, Provenance } from "../components/ui.jsx";
 import { shortHash } from "../format.js";
+import { useRefreshOnTurnEnd } from "../copilot-hooks.js";
 
 export default function Sources() {
   const { t } = useApp();
@@ -11,7 +12,9 @@ export default function Sources() {
   const [query, setQuery] = useState("");
   const [error, setError] = useState(null);
   useEffect(() => { api.providers().then(setProviders).catch(setError); }, []);
-  useEffect(() => { api.snapshots({ query: query || undefined, limit: 100 }).then(setSnaps).catch(setError); }, [query]);
+  const loadSnaps = () => api.snapshots({ query: query || undefined, limit: 100 }).then(setSnaps).catch(setError);
+  useEffect(() => { loadSnaps(); }, [query]);
+  useRefreshOnTurnEnd(loadSnaps);
   return (
     <div className="space-y-4">
       <h1>{t("nav_sources")}</h1>

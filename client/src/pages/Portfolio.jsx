@@ -1,23 +1,63 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { BarList, Chip, ConfirmButton, Empty, ErrorBox, Field, Kpi, LineChart, Provenance } from "../components/ui.jsx";
 import { SERIES_COLORS, money, num, pct, signClass } from "../format.js";
+import { holdingFromRow, holdingsPatch } from "../copilot-context.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
 
 const blank = () => ({ symbol: "", quantity: "", snapshot_id: "", currency: "", cost_basis: "" });
+const rowsFrom = (initial) => (initial?.holdings?.length ? initial.holdings.map((h) => ({ ...blank(), ...h, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [blank()]);
+const filled = (r) => r.symbol && r.quantity !== "";
 
 function Editor({ snapshots, initial, onSaved }) {
   const { t, notify } = useApp();
   const [name, setName] = useState(initial?.name || "default");
   const [currency, setCurrency] = useState(initial?.currency || "EUR");
-  const [rows, setRows] = useState(initial?.holdings?.length ? initial.holdings.map((h) => ({ ...blank(), ...h, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [blank()]);
+  const [rows, setRows] = useState(rowsFrom(initial));
   const [csv, setCsv] = useState("");
   const [error, setError] = useState(null);
+  // what was loaded from the server: the baseline the user's changes are measured against
+  const base = useRef({ loaded: initial?.name ?? null, name: initial?.name || "default", currency: initial?.currency || "EUR", rows: rowsFrom(initial) });
+  const latest = useRef({ name, currency, rows, csv });
+  latest.current = { name, currency, rows, csv };
+  const forceReset = useRef(false);
+  const isDirty = () => {
+    const b = base.current;
+    const c = latest.current;
+    return c.name !== b.name || c.currency !== b.currency || JSON.stringify(c.rows) !== JSON.stringify(b.rows) || c.csv.trim() !== "";
+  };
+  // A reload (after a save, a copilot turn, or switching portfolio) only replaces the form when the user has nothing unsaved:
+  // otherwise the draft is kept and the baseline stays, so a later save sends just the user's own changes.
   useEffect(() => {
-    setName(initial?.name || "default");
-    setCurrency(initial?.currency || "EUR");
-    setRows(initial?.holdings?.length ? initial.holdings.map((h) => ({ ...blank(), ...h, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [blank()]);
+    const switched = (initial?.name ?? null) !== base.current.loaded;
+    if (!forceReset.current && !switched && isDirty()) return;
+    forceReset.current = false;
+    base.current = { loaded: initial?.name ?? null, name: initial?.name || "default", currency: initial?.currency || "EUR", rows: rowsFrom(initial) };
+    setName(base.current.name);
+    setCurrency(base.current.currency);
+    setRows(rowsFrom(initial));
+    setCsv("");
   }, [initial]);
+  useContextProvider(`portfolio:${initial?.name ?? "new"}`, () => {
+    const b = base.current;
+    const c = latest.current;
+    if (!initial) {
+      const fields = { name: c.name, currency: c.currency, holdings: c.rows.filter(filled).map(holdingFromRow) };
+      if (c.csv.trim()) fields.csv_text = c.csv;
+      return { kind: "portfolio-form", draft: true, dirty: c.csv.trim() !== "" || fields.holdings.length > 0, fields };
+    }
+    const patch = holdingsPatch(b.rows, c.rows);
+    const fields = {};
+    if (c.name !== b.name) fields.name = c.name;
+    if (c.currency !== b.currency) fields.currency = c.currency;
+    if (patch) {
+      if (patch.upsert.length) fields.upsert = patch.upsert;
+      if (patch.remove.length) fields.remove = patch.remove;
+    } else fields.holdings = c.rows.filter(filled).map(holdingFromRow);
+    if (c.csv.trim()) fields.csv_text = c.csv;
+    return { kind: "portfolio-form", draft: false, dirty: Object.keys(fields).length > 0, fields };
+  });
   const setRow = (i, k, v) => setRows(rows.map((r, n) => {
     if (n !== i) return r;
     const next = { ...r, [k]: v };
@@ -32,8 +72,18 @@ function Editor({ snapshots, initial, onSaved }) {
     try {
       const body = csv.trim()
         ? { csv_text: csv, currency }
-        : { currency, holdings: rows.filter((r) => r.symbol && r.quantity !== "").map((r) => ({ symbol: r.symbol, quantity: Number(r.quantity), snapshot_id: r.snapshot_id || undefined, currency: r.currency || undefined, cost_basis: r.cost_basis === "" ? undefined : Number(r.cost_basis) })) };
-      await api.portfolioSet(name, body);
+        : { currency, holdings: rows.filter(filled).map((r) => ({ symbol: r.symbol, quantity: Number(r.quantity), snapshot_id: r.snapshot_id || undefined, currency: r.currency || undefined, cost_basis: r.cost_basis === "" ? undefined : Number(r.cost_basis) })) };
+      const b = base.current;
+      const patch = initial && name === initial.name && !csv.trim() ? holdingsPatch(b.rows, rows) : null;
+      if (patch) {
+        // an existing portfolio: send only what the user changed, so an edit made meanwhile by the assistant is not overwritten
+        const delta = {};
+        if (currency !== b.currency) delta.currency = currency;
+        if (patch.upsert.length) delta.upsert = patch.upsert;
+        if (patch.remove.length) delta.remove = patch.remove;
+        if (Object.keys(delta).length) await api.portfolioPatch(name, delta);
+      } else await api.portfolioSet(name, body);
+      forceReset.current = true;
       notify(`${t("saved")}: ${name}`);
       setError(null);
       setCsv("");
@@ -76,6 +126,8 @@ function Analysis({ name, snapshots, holdings, base }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [report, setReport] = useState(null);
+  const dataRef = useRef(null);
+  dataRef.current = data;
   const foreign = Array.from(new Set((holdings || []).map((h) => h.currency).filter((c) => c && c !== (currency || base))));
 
   const run = useCallback(async () => {
@@ -87,6 +139,7 @@ function Analysis({ name, snapshots, holdings, base }) {
     } catch (e) { setData(null); setError(e); } finally { setBusy(false); }
   }, [name, date, currency, fx]);
   useEffect(() => { setData(null); setReport(null); }, [name]);
+  useRefreshOnTurnEnd(() => (dataRef.current ? run() : undefined));
 
   return (
     <div className="space-y-3">
@@ -164,10 +217,14 @@ export default function Portfolio() {
     } catch (e) { setError(e); }
   }, []);
   useEffect(() => { load(); }, [load, version]);
-  useEffect(() => {
-    if (!selected) { setDetail(null); return; }
-    api.portfolio(selected).then((d) => setDetail({ name: d.name, currency: d.currency, holdings: d.holdings })).catch((e) => { setDetail({ name: selected, currency: "EUR", holdings: [] }); setError(e); });
-  }, [selected, version]);
+  const loadDetail = useCallback(() => {
+    if (!selected) { setDetail(null); return Promise.resolve(); }
+    return api.portfolio(selected).then((d) => setDetail({ name: d.name, currency: d.currency, holdings: d.holdings })).catch((e) => { setDetail({ name: selected, currency: "EUR", holdings: [] }); setError(e); });
+  }, [selected]);
+  useEffect(() => { loadDetail(); }, [loadDetail, version]);
+  // a copilot turn ended: reload the lists and the open portfolio in place; the editor keeps whatever the user is typing
+  useRefreshOnTurnEnd(() => Promise.all([load(), loadDetail()]));
+  usePublishView("portfolio", { selected });
   useEffect(() => { if (!selected && list.length) setSelected(list[0].name); }, [list, selected]);
 
   return (

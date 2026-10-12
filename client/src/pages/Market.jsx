@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { BarList, Empty, ErrorBox, Field, Kpi, LineChart, Legend, Provenance, Tabs } from "../components/ui.jsx";
 import { SERIES_COLORS, num, pct, signClass } from "../format.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
 
 const ymd = (d) => d.toISOString().slice(0, 10);
 
@@ -171,6 +172,15 @@ export default function Market() {
     loadSnaps();
     api.providers().then((p) => setProviders(p.providers)).catch(() => {});
   }, [loadSnaps]);
+  // a copilot turn ended: reload the snapshots in place; the selection, the open series and the forms are left alone
+  useRefreshOnTurnEnd(() => loadSnaps());
+  usePublishView("market", { selected, tab });
+  useContextProvider("snapshot:new", () => {
+    const fields = tab === "search" ? { query, remote, start: form.start, end: form.end, interval: form.interval }
+      : tab === "manual" ? { ...form } : { ...csv, text: csv.text.slice(0, 20000) };
+    const empty = tab === "search" ? !query : tab === "manual" ? !form.symbol : !csv.symbol && !csv.text;
+    return { kind: "snapshot-fetch-form", draft: true, tab, dirty: !empty, fields };
+  });
 
   const search = async (e) => {
     e?.preventDefault();

@@ -1,8 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { Chip, ConfirmButton, Empty, ErrorBox, Field, Issues, Kpi, Legend, LineChart, NullBand, Tabs } from "../components/ui.jsx";
 import { SERIES_COLORS, clock, num, pct, signClass } from "../format.js";
+import { configPatch } from "../copilot-context.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
 
 const WARN_CLASS = { none: "chip", low: "chip chip-amber", medium: "chip chip-amber", high: "chip chip-danger" };
 
@@ -186,15 +188,37 @@ function BacktestTab({ snapshots, refreshLog }) {
   const [busy, setBusy] = useState(false);
   const [run, setRun] = useState(null);
   const [strategies, setStrategies] = useState([]);
+  const [loaded, setLoaded] = useState(null); // the saved strategy open in the editor: the baseline for partial saves
+  const live = useRef({});
+  live.current = { loaded, text };
+  usePublishView("lab-spec", { strategyId: loaded?.id || null, runId: run?.run_id || null });
+  useContextProvider(`strategy:${loaded?.id ?? "new"}`, () => {
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch { /* unsaved text may not be valid JSON yet */ }
+    const options = { holdout_fraction: holdout, split_date: split, note };
+    if (!parsed) return { kind: "strategy-form", draft: !loaded, dirty: text.trim() !== "", parse_error: text.trim() !== "", fields: { spec_text: text.slice(0, 20000) }, ...options };
+    if (!loaded) return { kind: "strategy-form", draft: true, dirty: true, fields: parsed, ...options };
+    const fields = configPatch(loaded.spec, parsed);
+    return { kind: "strategy-form", draft: false, dirty: Object.keys(fields).length > 0 || !!note, fields, ...options };
+  });
 
   const loadStrategies = useCallback(() => api.strategies().then((s) => setStrategies(s.strategies)).catch(() => {}), []);
   useEffect(() => { loadStrategies(); }, [loadStrategies]);
+  // A copilot turn ended: refresh the saved strategies, and show an agent edit of the open strategy unless the user has unsaved text.
+  useRefreshOnTurnEnd(async () => {
+    loadStrategies();
+    const { loaded: cur, text: current } = live.current;
+    if (!cur || current !== JSON.stringify(cur.spec, null, 2)) return;
+    const fresh = await api.strategy(cur.id).catch(() => null);
+    if (fresh && fresh.spec_hash !== cur.spec_hash) { setLoaded(fresh); setText(JSON.stringify(fresh.spec, null, 2)); }
+  });
 
   const loadExample = async () => {
     const { spec } = await api.labExample();
     const first = snapshots[0];
     if (first) spec.universe = [first.id];
     setText(JSON.stringify(spec, null, 2));
+    setLoaded(null);
     setIssues(null);
   };
   const parse = () => { try { return JSON.parse(text); } catch (e) { setError(new Error(`${t("invalid_json")}: ${e.message}`)); return null; } };
@@ -213,7 +237,18 @@ function BacktestTab({ snapshots, refreshLog }) {
   };
   const save = async () => {
     const spec = parse(); if (!spec) return;
-    try { const r = await api.strategySave(spec, note); notify(`${t("saved")}: ${r.name}`); setError(null); loadStrategies(); } catch (e) { setError(e); if (e.issues) setIssues(e.issues); }
+    try {
+      let r;
+      if (loaded && spec.name === loaded.name) {
+        // a saved strategy: send only what the user changed, so an edit made meanwhile by the assistant is not overwritten
+        const delta = configPatch(loaded.spec, spec);
+        r = Object.keys(delta).length || note ? await api.strategyPatch(loaded.id, { spec_patch: delta, note: note || undefined }) : { id: loaded.id, name: loaded.name };
+      } else r = await api.strategySave(spec, note);
+      const fresh = await api.strategy(r.id);
+      setLoaded(fresh);
+      setText(JSON.stringify(fresh.spec, null, 2));
+      notify(`${t("saved")}: ${r.name}`); setError(null); loadStrategies();
+    } catch (e) { setError(e); if (e.issues) setIssues(e.issues); }
   };
   const runIt = async () => {
     const spec = parse(); if (!spec) return;
@@ -226,7 +261,7 @@ function BacktestTab({ snapshots, refreshLog }) {
       refreshLog();
     } catch (e) { setError(e); if (e.issues) setIssues(e.issues); } finally { setBusy(false); }
   };
-  const loadStrategy = async (id) => { const s = await api.strategy(id); setText(JSON.stringify(s.spec, null, 2)); setIssues(null); };
+  const loadStrategy = async (id) => { const s = await api.strategy(id); setText(JSON.stringify(s.spec, null, 2)); setLoaded(s); setIssues(null); };
 
   return (
     <div className="grid gap-4 xl:grid-cols-[400px_minmax(0,1fr)]">
@@ -253,7 +288,7 @@ function BacktestTab({ snapshots, refreshLog }) {
           {strategies.map((s) => (
             <div key={s.id} className="flex items-center justify-between gap-2">
               <button type="button" className="btn-link truncate text-left" onClick={() => loadStrategy(s.id)}>{s.name}</button>
-              <span className="flex items-center gap-2"><Chip>{s.variants_tried} {t("variants")}</Chip><ConfirmButton t={t} onConfirm={async () => { await api.strategyDelete(s.id); loadStrategies(); }} /></span>
+              <span className="flex items-center gap-2"><Chip>{s.variants_tried} {t("variants")}</Chip><ConfirmButton t={t} onConfirm={async () => { await api.strategyDelete(s.id); if (loaded?.id === s.id) setLoaded(null); loadStrategies(); }} /></span>
             </div>
           ))}
         </div>
@@ -314,6 +349,8 @@ export default function Lab() {
   const [error, setError] = useState(null);
   useEffect(() => { api.snapshots({ limit: 100 }).then((s) => setSnapshots(s.snapshots)).catch(setError); }, []);
   const bump = useCallback(() => setVersion((v) => v + 1), []);
+  usePublishView("lab", { tab, openedId: opened?.run_id || null });
+  useRefreshOnTurnEnd(() => { bump(); return api.snapshots({ limit: 100 }).then((s) => setSnapshots(s.snapshots)).catch(() => {}); });
   const open = async (id) => {
     try { setOpened(await api.experiment(id)); setTab("opened"); setError(null); } catch (e) { setError(e); }
   };

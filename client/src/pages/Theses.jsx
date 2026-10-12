@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { Chip, ConfirmButton, CopyButton, Empty, ErrorBox, Field, Issues, Provenance, StatePill, StatusPill, Tabs } from "../components/ui.jsx";
 import { clock, num, splitList } from "../format.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
 
 const STATUSES = ["open", "confirmed", "invalidated", "expired", "archived"];
 
@@ -42,6 +43,10 @@ function CreateForm({ onCreated }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  useContextProvider("thesis:new", () => {
+    const filled = Object.values(f).some((v) => v !== "");
+    return { kind: "thesis-form", draft: true, dirty: filled, fields: { ...f } };
+  });
   const submit = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -84,6 +89,9 @@ function EvidenceForm({ thesis, snapshots, onDone }) {
   const [f, setF] = useState({ side: "for", kind: "note", title: "", quote: "", ref: "", snapshot_id: "", expr: "" });
   const [error, setError] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  useContextProvider(`evidence:${thesis.id}`, () => ({
+    kind: "evidence-form", draft: true, thesis_id: thesis.id, dirty: !!(f.title || f.quote || f.ref || f.expr), fields: { ...f },
+  }));
   const submit = async (e) => {
     e.preventDefault();
     try {
@@ -178,6 +186,7 @@ function Detail({ id, snapshots, onChanged, onDeleted }) {
     try { const d = await api.thesis(id); setTh(d); setError(null); } catch (e) { setError(e); }
   }, [id]);
   useEffect(() => { setCommittee(null); setReport(null); load(); }, [load]);
+  useRefreshOnTurnEnd(load);
 
   const run = async (name, fn) => {
     setBusy(name);
@@ -315,6 +324,8 @@ export default function Theses({ param }) {
     } catch (e) { setError(e); }
   }, [status, query]);
   useEffect(() => { load(); }, [load]);
+  useRefreshOnTurnEnd(load);
+  usePublishView("theses", { creating });
 
   const open = (id) => { window.location.hash = id ? `#/theses/${id}` : "#/theses"; };
 
