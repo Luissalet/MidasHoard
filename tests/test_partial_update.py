@@ -161,3 +161,77 @@ def test_lot_patch_rest_returns_409_for_a_stale_lot(client):
     stale = client.patch("/api/portfolios/m", json={"upsert": [{"symbol": "A", "quantity": 6, "match": {"quantity": 2}}]})
     assert stale.status_code == 409
     assert [h["quantity"] for h in client.get("/api/portfolios/m").json()["holdings"]] == [1, 5]
+
+# ------------------------------------------------------------ persistent lot ids
+def _ids(svc, name="lots"):
+    return [h["lot_id"] for h in svc.portfolios.get(name)["holdings"]]
+
+
+def test_every_holding_gets_a_stable_lot_id_on_set_put_csv_and_upsert(svc, lots):
+    ids = _ids(svc)
+    assert len(ids) == 3 and len(set(ids)) == 3 and all(i.startswith("lot_") for i in ids)
+    assert _ids(svc) == ids  # stable across reads
+    tool(svc, "portfolio_set", name="lots", action="patch", upsert=[{"symbol": "BBB", "quantity": 7}, {"symbol": "NEW", "quantity": 1},
+                                                                    {"symbol": "AAA", "quantity": 3, "new_lot": True}])
+    after = _ids(svc)
+    assert after[:3] == ids and len(set(after)) == 5  # updates keep ids; new symbol and new_lot get their own
+    csv_res = tool(svc, "portfolio_set", name="csv", csv_text="symbol,quantity\nXXX,1\nXXX,2\n")
+    assert len({h["lot_id"] for h in csv_res["holdings"]}) == 2
+    added = tool(svc, "portfolio_set", name="csv", replace=False, holdings=[{"symbol": "YYY", "quantity": 4}])
+    assert [h["lot_id"] for h in added["holdings"]][:2] == [h["lot_id"] for h in csv_res["holdings"]] and len({h["lot_id"] for h in added["holdings"]}) == 3
+
+
+def test_legacy_portfolios_without_ids_are_given_ids_once_and_persisted(svc):
+    import json
+    svc.db.execute("INSERT INTO portfolios(name, currency, holdings, updated_ts) VALUES (?,?,?,?)",
+                   ("old", "USD", json.dumps([{"symbol": "AAA", "quantity": 1}, {"symbol": "AAA", "quantity": 2}]), 1.0))
+    first = _ids(svc, "old")
+    assert len(set(first)) == 2 and _ids(svc, "old") == first
+    stored = json.loads(svc.db.one("SELECT holdings FROM portfolios WHERE name='old'")["holdings"])
+    assert [h["lot_id"] for h in stored] == first  # persisted, not recomputed
+    assert svc.portfolios.get("old")["updated_at"] == 1.0
+
+
+def test_put_keeps_the_ids_of_rows_that_carry_them_and_names_the_rest(svc, lots):
+    old = _ids(svc)
+    res = tool(svc, "portfolio_set", name="lots", holdings=[{"symbol": "AAA", "quantity": 99, "lot_id": old[1]}, {"symbol": "ZZZ", "quantity": 1},
+                                                            {"symbol": "AAA", "quantity": 5, "lot_id": old[1]}])  # a duplicate id is renamed
+    got = [h["lot_id"] for h in res["holdings"]]
+    assert got[0] == old[1] and got[1] not in old and len(set(got)) == 3
+
+
+def test_patch_by_lot_id_targets_exactly_that_lot_and_composes_with_other_changes(svc, lots):
+    a, b, _ = _ids(svc)
+    # the agent changes the quantity of lot a; the user's form (still thinking it is 10 shares) changes its cost: both land
+    tool(svc, "portfolio_set", name="lots", action="patch", upsert=[{"symbol": "AAA", "quantity": 12, "lot_id": a}])
+    tool(svc, "portfolio_set", name="lots", action="patch", upsert=[{"symbol": "AAA", "cost_basis": 120, "lot_id": a}])
+    assert _lots(svc) == [("AAA", 12, 120), ("AAA", 20, 200), ("BBB", 5, None)]
+    tool(svc, "portfolio_set", name="lots", action="patch", remove=[{"symbol": "AAA", "lot_id": b}])
+    assert _lots(svc) == [("AAA", 12, 120), ("BBB", 5, None)] and _ids(svc)[0] == a
+
+
+def test_reviewer_scenario_a_replaced_lot_is_a_conflict_not_a_write_to_another_lot(client):
+    assert client.put("/api/portfolios/r", json={"currency": "USD", "holdings": [
+        {"symbol": "AAA", "quantity": 12, "cost_basis": 110}, {"symbol": "AAA", "quantity": 20, "cost_basis": 200}, {"symbol": "BBB", "quantity": 7}]}).status_code == 200
+    loaded = client.get("/api/portfolios/r").json()["holdings"]
+    first = loaded[0]["lot_id"]
+    # the agent removes the first AAA lot and adds AAA 30/300 in one atomic patch
+    agent = client.patch("/api/portfolios/r", json={"remove": [{"lot_id": first}], "upsert": [{"symbol": "AAA", "quantity": 30, "cost_basis": 300, "new_lot": True}]})
+    assert agent.status_code == 200
+    before = client.get("/api/portfolios/r").json()["holdings"]
+    assert [(h["quantity"], h.get("cost_basis")) for h in before] == [(20, 200), (7, None), (30, 300)]
+    # the user's stale form edits the first AAA cost: that lot is gone -> 409 and nothing changes
+    stale = client.patch("/api/portfolios/r", json={"upsert": [{"symbol": "AAA", "cost_basis": 120, "lot_id": first}, {"symbol": "BBB", "quantity": 9}]})
+    assert stale.status_code == 409
+    assert client.get("/api/portfolios/r").json()["holdings"] == before
+    removal = client.patch("/api/portfolios/r", json={"remove": [{"symbol": "AAA", "lot_id": first}]})
+    assert removal.status_code == 409 and client.get("/api/portfolios/r").json()["holdings"] == before
+
+
+def test_lot_ids_are_in_the_tool_and_analysis_output(svc, portfolio):
+    got = svc.portfolios.get("main")["holdings"]
+    assert all(h["lot_id"] for h in got)
+    res = tool(svc, "portfolio_set", name="main", action="patch", upsert=[{"symbol": "fake.up", "quantity": 11}])
+    assert [h["lot_id"] for h in res["holdings"]] == [h["lot_id"] for h in got]
+    analysis = tool(svc, "portfolio_analyze", name="main")
+    assert {h["lot_id"] for h in analysis["holdings"]} == {h["lot_id"] for h in got}

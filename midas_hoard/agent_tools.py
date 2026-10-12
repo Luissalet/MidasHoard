@@ -205,9 +205,9 @@ class PortfolioSetArgs(BaseModel):
     name: str = Field("default", min_length=1, max_length=60)
     action: Literal["set", "delete", "patch"] = Field("set", description="patch atomically merges upsert/remove/currency into the existing portfolio, leaving other holdings as they are.")
     confirm: bool = False
-    upsert: Optional[list[dict[str, Any]]] = Field(None, description="patch: holdings matched by symbol; only the given fields change (null drops one); unknown symbols are added. For a symbol held in several lots add match={quantity, cost_basis, snapshot_id, currency} with the lot's previous values (the first lot equal to all of them is changed; none equal -> conflict, nothing changes); new_lot=true appends another lot of an existing symbol.")
-    remove: Optional[list[Any]] = Field(None, description="patch: symbols to remove (all their lots), or {symbol, match} to remove one lot identified by its previous values (none equal -> conflict).")
-    holdings: Optional[list[dict[str, Any]]] = Field(None, description='[{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}]')
+    upsert: Optional[list[dict[str, Any]]] = Field(None, description="patch: holdings matched by symbol; only the given fields change (null drops one); unknown symbols are added. Every holding has a stable lot_id (shown by portfolio_analyze and in the results); for a symbol held in several lots pass lot_id to change exactly that lot (other fields changed meanwhile are kept; a lot that no longer exists -> conflict, nothing changes). Legacy alternative: match={quantity, cost_basis, snapshot_id, currency} with the lot's previous values (first equal lot; none -> conflict). new_lot=true appends another lot of an existing symbol.")
+    remove: Optional[list[Any]] = Field(None, description="patch: symbols to remove (all their lots), or {lot_id} to remove exactly one lot (gone -> conflict), or {symbol, match} to remove one lot identified by its previous values (none equal -> conflict).")
+    holdings: Optional[list[dict[str, Any]]] = Field(None, description='(lot_id optional: keep it to preserve a lot''s identity) [{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}]')
     csv_text: Optional[str] = Field(None, max_length=1_000_000, description="CSV with header: symbol,quantity[,snapshot_id,currency,cost_basis,label]")
     path: Optional[str] = Field(None, max_length=1000)
     currency: Optional[str] = Field(None, max_length=3, description="Base currency of the portfolio (default EUR).")
@@ -502,7 +502,7 @@ TOOLS: list[Tool] = [
          CommitteeArgs, _ann(False, False, False), run_committee),
     Tool("portfolio_set",
          "Set a portfolio's holdings (list or CSV) or delete it (action=delete, confirm=true). Definir cartera.\n"
-         "Holdings: symbol, quantity, optional snapshot_id, currency, cost_basis, label. Read-only analysis: no orders, no broker.\n"
+         "Holdings: symbol, quantity, optional snapshot_id, currency, cost_basis, label; each holding gets a stable lot_id (keep it when re-sending holdings; patch addresses a lot by it). Read-only analysis: no orders, no broker.\n"
          "Sinónimos: cartera, posiciones, importar csv de posiciones, acciones que tengo.",
          PortfolioSetArgs, _ann(False, True, True), run_portfolio_set),
     Tool("portfolio_analyze",

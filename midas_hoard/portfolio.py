@@ -11,6 +11,7 @@ import csv
 import io
 import json
 import math
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -26,6 +27,11 @@ from .snapshots import Snapshot, SnapshotStore, provenance
 from .theses import STALE_DAYS
 
 MAX_HOLDINGS = 100
+
+
+def new_lot_id() -> str:
+    """A short random id that names one holding (lot) for as long as it exists."""
+    return "lot_" + secrets.token_hex(5)
 
 
 def parse_csv(text: str) -> list[dict[str, Any]]:
@@ -45,7 +51,9 @@ class Portfolios:
         self.db, self.store, self.clock = db, store, clock
 
     # --------------------------------------------------------------- storage
-    def _clean(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _clean(self, rows: list[dict[str, Any]], taken: Optional[set[str]] = None) -> list[dict[str, Any]]:
+        """Validated holdings. A holding keeps the ``lot_id`` it carries (when unique) and gets a new one otherwise."""
+        ids: set[str] = set(taken or ())
         if not rows:
             raise MidasError("invalid_request", "A portfolio needs at least one holding.", "Pass holdings=[{symbol, quantity}] or csv_text with a header.")
         if len(rows) > MAX_HOLDINGS:
@@ -62,7 +70,11 @@ class Portfolios:
                 raise MidasError("invalid_request", f"Holding {i + 1} ({sym or sid}): quantity '{r.get('quantity')}' is not a number.", "Use 12 or 0.5.") from None
             if qty == 0 or math.isnan(qty):
                 raise MidasError("invalid_request", f"Holding {i + 1} ({sym or sid}): quantity is zero.", "Remove the holding instead.")
-            item: dict[str, Any] = {"symbol": sym, "quantity": qty}
+            lot_id = str(r.get("lot_id") or "").strip()
+            if not lot_id or len(lot_id) > 40 or lot_id in ids:
+                lot_id = new_lot_id()
+            ids.add(lot_id)
+            item: dict[str, Any] = {"lot_id": lot_id, "symbol": sym, "quantity": qty}
             if sid:
                 meta = self.store.meta(sid)
                 item["snapshot_id"] = sid
@@ -92,10 +104,12 @@ class Portfolios:
             csv_text = file.read_text(encoding="utf-8-sig")
         if csv_text:
             rows.extend(parse_csv(csv_text))
-        clean = self._clean(rows)
         existing = self.db.one("SELECT * FROM portfolios WHERE name = ?", (name,))
         if existing and not replace:
-            clean = json.loads(existing["holdings"]) + clean
+            kept = self.get(name)["holdings"]
+            clean = kept + self._clean(rows, {h["lot_id"] for h in kept})
+        else:
+            clean = self._clean(rows)
         ccy = (currency or (existing["currency"] if existing else "EUR")).upper()
         if len(ccy) != 3:
             raise MidasError("invalid_request", f"Currency '{ccy}' is not a 3-letter code.", "Use EUR, USD...")
@@ -115,16 +129,27 @@ class Portfolios:
         """Atomic partial update: remove holdings, then merge the provided fields of each upserted holding
         (a ``null`` or empty field drops it; an unknown symbol is appended). Other holdings and fields are untouched.
 
-        Several lots of one symbol are addressed with ``match``: the lot's previous values (any of quantity, cost_basis,
-        snapshot_id, currency). The target is the first lot of that symbol equal to every key of ``match``; when none is,
-        the call fails with a ``conflict`` and changes nothing. ``new_lot: true`` appends a lot even if the symbol exists.
-        A remove entry is a symbol (all its lots) or ``{symbol, match}`` (one lot). Lots are resolved against the portfolio
-        as it was read, so one entry's change cannot redirect another."""
+        Every holding has a stable ``lot_id``. An entry with ``lot_id`` addresses exactly that lot, whatever its other values
+        are now (so changes made meanwhile to other fields compose); when the lot no longer exists the call fails with a
+        ``conflict`` and changes nothing. Without ``lot_id``, several lots of one symbol are addressed with ``match``: the
+        lot's previous values (any of quantity, cost_basis, snapshot_id, currency); the target is the first lot of that
+        symbol equal to every key of ``match`` (none -> ``conflict``). ``new_lot: true`` appends a lot even if the symbol
+        exists. A remove entry is a symbol (all its lots), ``{lot_id}`` or ``{symbol, match}`` (one lot). Lots are resolved
+        against the portfolio as it was read, so one entry's change cannot redirect another."""
         with self.db.transaction():
             current = self.get(name)
             rows = [dict(h) for h in current["holdings"]]
             original = list(rows)
+            by_id = {r["lot_id"]: r for r in original}
             claimed: set[int] = set()
+
+            def find_id(lot_id: str) -> dict[str, Any]:
+                if lot_id not in by_id:
+                    raise MidasError("conflict", f"Lot {lot_id} of '{name}' no longer exists.", "Reload the portfolio and redo the change.")
+                return by_id[lot_id]
+
+            def lot_id_of(entry: dict[str, Any]) -> str:
+                return str(entry.get("lot_id") or "").strip()
 
             def find_lot(sym: str, match: dict[str, Any]) -> dict[str, Any]:
                 for r in original:
@@ -151,6 +176,9 @@ class Portfolios:
             drop_symbols: set[str] = set()
             for entry in remove or []:
                 if isinstance(entry, dict):
+                    if lot_id_of(entry):
+                        drop.append(find_id(lot_id_of(entry)))
+                        continue
                     sym = str(entry.get("symbol", "")).strip()
                     if not sym:
                         raise MidasError("invalid_request", "Every removed holding needs a symbol.", "Pass a symbol or {symbol, match}.")
@@ -163,20 +191,23 @@ class Portfolios:
                     drop_symbols.add(str(entry).strip())
             targets: list[tuple[dict[str, Any], dict[str, Any]]] = []
             for item in upsert or []:
+                if lot_id_of(item):
+                    targets.append((find_id(lot_id_of(item)), {k: v for k, v in item.items() if k not in ("match", "new_lot", "lot_id") and not (k == "symbol" and not str(v or "").strip())}))
+                    continue
                 sym = str(item.get("symbol", "")).strip()
                 if not sym:
                     raise MidasError("invalid_request", "Every upserted holding needs a symbol.", "Holdings are matched by symbol.")
                 match = as_match(item.get("match"), sym)
                 if match is not None:
-                    targets.append((find_lot(sym, match), {k: v for k, v in item.items() if k not in ("symbol", "match", "new_lot")}))
+                    targets.append((find_lot(sym, match), {k: v for k, v in item.items() if k not in ("symbol", "match", "new_lot", "lot_id")}))
             rows = [r for r in rows if r.get("symbol") not in drop_symbols and not any(r is d for d in drop)]
             for lot, fields in targets:
                 merge(lot, fields)
             for item in upsert or []:
-                if item.get("match") is not None:
+                if item.get("match") is not None or lot_id_of(item):
                     continue
                 sym = str(item.get("symbol", "")).strip()
-                fields = {k: v for k, v in item.items() if k not in ("symbol", "match", "new_lot")}
+                fields = {k: v for k, v in item.items() if k not in ("symbol", "match", "new_lot", "lot_id")}
                 matches = [] if item.get("new_lot") else [r for r in rows if r.get("symbol") == sym]
                 if len(matches) > 1:
                     raise MidasError("invalid_request", f"'{sym}' appears in several lots of '{name}'.", "Address one lot with match, or replace the whole portfolio with portfolio_set.")
@@ -184,7 +215,7 @@ class Portfolios:
                     merge(matches[0], fields)
                 else:
                     rows.append({"symbol": sym, **{k: v for k, v in fields.items() if v is not None and v != ""}})
-            clean = self._clean(rows)
+            clean = self._clean(rows)  # keeps every lot_id; lots appended above get one here
             ccy = (currency or current["currency"]).upper()
             if len(ccy) != 3:
                 raise MidasError("invalid_request", f"Currency '{ccy}' is not a 3-letter code.", "Use EUR, USD...")
@@ -195,7 +226,21 @@ class Portfolios:
         row = self.db.one("SELECT * FROM portfolios WHERE name = ?", (name,))
         if row is None:
             raise MidasError("not_found", f"Unknown portfolio '{name}'.", "Create it with portfolio_set.")
-        return {"name": row["name"], "currency": row["currency"], "holdings": json.loads(row["holdings"]), "updated_at": row["updated_ts"]}
+        holdings = json.loads(row["holdings"])
+        if any(not h.get("lot_id") for h in holdings):
+            # stored before lots had ids: name them now (inside a transaction, re-read first so concurrent readers agree)
+            with self.db.transaction():
+                row = self.db.one("SELECT * FROM portfolios WHERE name = ?", (name,)) or row
+                holdings = json.loads(row["holdings"])
+                taken = {h["lot_id"] for h in holdings if h.get("lot_id")}
+                for h in holdings:
+                    if not h.get("lot_id"):
+                        h["lot_id"] = new_lot_id()
+                        while h["lot_id"] in taken:
+                            h["lot_id"] = new_lot_id()
+                        taken.add(h["lot_id"])
+                self.db.execute("UPDATE portfolios SET holdings=? WHERE name=?", (json.dumps(holdings), name))
+        return {"name": row["name"], "currency": row["currency"], "holdings": holdings, "updated_at": row["updated_ts"]}
 
     def list(self) -> list[dict[str, Any]]:
         return [{"name": r["name"], "currency": r["currency"], "holdings": len(json.loads(r["holdings"])), "updated_at": r["updated_ts"]}
@@ -272,7 +317,7 @@ class Portfolios:
             closes[h["symbol"] + "|" + meta["id"]] = df["close"]
             snaps.append(Snapshot(dict(m, currency=base), df))
             metas.append(meta)
-            rows.append({"symbol": h["symbol"], "label": h.get("label", ""), "snapshot": meta["id"], "currency": ccy, "quantity": h["quantity"],
+            rows.append({"lot_id": h.get("lot_id"), "symbol": h["symbol"], "label": h.get("label", ""), "snapshot": meta["id"], "currency": ccy, "quantity": h["quantity"],
                          "price_date": last_date.strftime("%Y-%m-%d"), "price_native": float(snap.df["close"].iloc[-1]),
                          "price_base": float(df["close"].iloc[-1]), "cost_basis": h.get("cost_basis"), "frequency": meta["frequency"],
                          "_key": h["symbol"] + "|" + meta["id"]})

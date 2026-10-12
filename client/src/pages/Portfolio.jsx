@@ -7,6 +7,7 @@ import { holdingFromRow, holdingsPatch, rebaseLots } from "../copilot-context.js
 import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 // `_k` is the row's identity in the form (not sent anywhere): loaded rows are l0, l1... so the baseline and the form agree; added rows get n1, n2...
+// lot_id is the server's stable id of a lot: it rides along in the row (never shown or editable) so a save addresses exactly that lot.
 let newRows = 0;
 const blank = () => ({ _k: `n${++newRows}`, symbol: "", quantity: "", snapshot_id: "", currency: "", cost_basis: "" });
 const rowsFrom = (initial) => (initial?.holdings?.length ? initial.holdings.map((h, i) => ({ ...blank(), ...h, _k: `l${i}`, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [{ ...blank(), _k: "l0" }]);
@@ -74,7 +75,7 @@ function Editor({ snapshots, initial, onSaved }) {
     try {
       const body = csv.trim()
         ? { csv_text: csv, currency }
-        : { currency, holdings: rows.filter(filled).map((r) => ({ symbol: r.symbol, quantity: Number(r.quantity), snapshot_id: r.snapshot_id || undefined, currency: r.currency || undefined, cost_basis: r.cost_basis === "" ? undefined : Number(r.cost_basis) })) };
+        : { currency, holdings: rows.filter(filled).map((r) => ({ symbol: r.symbol, quantity: Number(r.quantity), snapshot_id: r.snapshot_id || undefined, currency: r.currency || undefined, cost_basis: r.cost_basis === "" ? undefined : Number(r.cost_basis), lot_id: r.lot_id || undefined })) };
       const patchable = initial && name === initial.name && !csv.trim();
       // an existing portfolio: send only what the user changed, so an edit made meanwhile by the assistant is not overwritten
       const send = async (b, rowsNow, currencyNow) => {
@@ -103,7 +104,7 @@ function Editor({ snapshots, initial, onSaved }) {
           setRows(re.rows);
           setCurrency(nextCurrency);
           const kept = (why) => setError(Object.assign(new Error(`${why} The portfolio changed meanwhile; your edits are kept - review and save again.`), { code: "conflict" }));
-          if (re.ambiguous.length) { kept(`Lots of ${re.ambiguous.join(", ")} were added or removed meanwhile.`); return; }
+          if (re.ambiguous.length) { kept(`Lots of ${re.ambiguous.join(", ")} were removed or replaced meanwhile, so nothing was saved.`); return; }
           try {
             await send(nextBase, re.rows, nextCurrency);
           } catch (again) {

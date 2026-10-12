@@ -182,47 +182,71 @@ test("form snapshots and view state are captured before the fetches, not after t
 
 // ------------------------------------------------------------------ save conflict: rebase the draft, never discard it
 
-const lotsOf = (...rows) => rows.map(([symbol, quantity, cost]) => ({ symbol, quantity, cost_basis: cost }));
+const lotsOf = (...rows) => rows.map(([symbol, quantity, cost, id]) => ({ ...(id ? { lot_id: id } : {}), symbol, quantity, cost_basis: cost }));
+const asRows = (ctxRef, holdings) => holdings.map((h, i) => ctxRef.rowFromHolding(h, `l${i}`));
+const brief = (rows) => rows.map((r) => [r.symbol, r.quantity, String(r.cost_basis)]);
 
-test("rebaseLots: the agent's quantity edit and the user's cost edit of the same lot compose", () => {
-  const { rowFromHolding, rebaseLots } = ctx;
-  const base = [rowFromHolding(lotsOf(["AAA", 11, 100])[0], "l0"), rowFromHolding(lotsOf(["AAA", 20, 200])[0], "l1"), rowFromHolding(lotsOf(["BBB", 7])[0], "l2")];
-  const draft = base.map((r, i) => (i === 0 ? { ...r, cost_basis: "110" } : { ...r }));
-  const out = rebaseLots(base, draft, lotsOf(["AAA", 12, 100], ["AAA", 20, 200], ["BBB", 7]));
-  assert.deepEqual(out.ambiguous, []);
-  assert.deepEqual(out.rows.map((r) => [r.symbol, r.quantity, String(r.cost_basis)]), [["AAA", "12", "110"], ["AAA", "20", "200"], ["BBB", "7", ""]]);
-  assert.deepEqual(out.base.map((r) => [r.symbol, r.quantity, String(r.cost_basis)]), [["AAA", "12", "100"], ["AAA", "20", "200"], ["BBB", "7", ""]]);
-  assert.deepEqual(holdingsPatch(out.base, out.rows), {
-    upsert: [{ symbol: "AAA", cost_basis: 110, match: { quantity: 12, cost_basis: 100, snapshot_id: null, currency: null } }],
-    remove: [],
+test("holdingsPatch addresses rows that carry a lot_id by it, and new rows never carry one", () => {
+  const base = asRows(ctx, lotsOf(["AAA", 10, 100, "lot_a"], ["AAA", 20, 200, "lot_b"], ["BBB", 5, undefined, "lot_c"]));
+  const draft = base.map((r) => ({ ...r }));
+  draft[0].cost_basis = "120";
+  draft.splice(2, 1); // BBB removed
+  draft.push({ ...row("CCC", 1), _k: "n1", lot_id: "stale" }, { ...row("AAA", 3), _k: "n2" });
+  assert.deepEqual(holdingsPatch(base, draft), {
+    upsert: [{ symbol: "AAA", cost_basis: 120, lot_id: "lot_a" }, { symbol: "CCC", quantity: 1 }, { symbol: "AAA", quantity: 3, new_lot: true }],
+    remove: [{ symbol: "BBB", lot_id: "lot_c" }],
   });
 });
 
-test("rebaseLots: a symbol whose lot count changed and that the user edited is ambiguous and keeps the draft", () => {
-  const { rowFromHolding, rebaseLots } = ctx;
-  const base = [rowFromHolding(lotsOf(["AAA", 11, 100])[0], "l0"), rowFromHolding(lotsOf(["AAA", 20, 200])[0], "l1"), rowFromHolding(lotsOf(["BBB", 7])[0], "l2")];
-  const draft = [{ ...base[0], cost_basis: "110" }, { ...base[1] }, { ...base[2], quantity: "9" }];
-  const out = rebaseLots(base, draft, lotsOf(["AAA", 11, 100], ["AAA", 20, 200], ["AAA", 5, 50], ["BBB", 8]));
-  assert.deepEqual(out.ambiguous, ["AAA"]);
-  assert.equal(out.rows.find((r) => r._k === "l0").cost_basis, "110");
-  assert.equal(out.rows.filter((r) => r.symbol === "AAA").length, 2);
-  // BBB was unambiguous: rebased onto the current lot, the user's quantity kept
-  const bbb = out.rows.find((r) => r.symbol === "BBB");
-  assert.equal(bbb.quantity, "9");
-  assert.deepEqual(out.base.filter((r) => r.symbol === "BBB").map((r) => r.quantity), ["8"]);
-  assert.deepEqual(out.base.filter((r) => r.symbol === "AAA").map((r) => r._k), ["l0", "l1"]);
+test("rebaseLots: the agent's quantity edit and the user's cost edit of the same lot compose, retried by lot_id", () => {
+  const { rebaseLots } = ctx;
+  const base = asRows(ctx, lotsOf(["AAA", 11, 100, "lot_a"], ["AAA", 20, 200, "lot_b"], ["BBB", 7, undefined, "lot_c"]));
+  const draft = base.map((r, i) => (i === 0 ? { ...r, cost_basis: "110" } : { ...r }));
+  const out = rebaseLots(base, draft, lotsOf(["AAA", 12, 100, "lot_a"], ["AAA", 20, 200, "lot_b"], ["BBB", 7, undefined, "lot_c"]));
+  assert.deepEqual(out.ambiguous, []);
+  assert.deepEqual(brief(out.rows), [["AAA", "12", "110"], ["AAA", "20", "200"], ["BBB", "7", ""]]);
+  assert.deepEqual(brief(out.base), [["AAA", "12", "100"], ["AAA", "20", "200"], ["BBB", "7", ""]]);
+  assert.deepEqual(holdingsPatch(out.base, out.rows), { upsert: [{ symbol: "AAA", cost_basis: 110, lot_id: "lot_a" }], remove: [] });
 });
 
-test("rebaseLots: untouched symbols adopt the current lots, new symbols appear, removed rows stay removed", () => {
-  const { rowFromHolding, rebaseLots } = ctx;
-  const base = [rowFromHolding(lotsOf(["AAA", 11, 100])[0], "l0"), rowFromHolding(lotsOf(["BBB", 7])[0], "l1"), rowFromHolding(lotsOf(["CCC", 1])[0], "l2")];
-  const draft = [{ ...base[0] }, { ...base[1], quantity: "8" }];
-  const out = rebaseLots(base, draft, lotsOf(["AAA", 11, 100], ["AAA", 3, 30], ["BBB", 7], ["CCC", 1], ["DDD", 4]));
-  assert.deepEqual(out.ambiguous, []);
-  assert.deepEqual(out.rows.map((r) => [r.symbol, r.quantity]), [["AAA", "11"], ["AAA", "3"], ["BBB", "8"], ["DDD", "4"]]);
+test("rebaseLots: a replaced lot keeps the draft, is reported, and writes nothing to the other AAA lot", () => {
+  const { rebaseLots } = ctx;
+  // saved AAA 12/110 (lot_a), AAA 20/200 (lot_b), BBB 7; the user edits the first AAA cost to 120; the agent removes lot_a and adds AAA 30/300
+  const base = asRows(ctx, lotsOf(["AAA", 12, 110, "lot_a"], ["AAA", 20, 200, "lot_b"], ["BBB", 7, undefined, "lot_c"]));
+  const draft = base.map((r, i) => (i === 0 ? { ...r, cost_basis: "120" } : { ...r }));
+  const out = rebaseLots(base, draft, lotsOf(["AAA", 20, 200, "lot_b"], ["BBB", 7, undefined, "lot_c"], ["AAA", 30, 300, "lot_d"]));
+  assert.deepEqual(out.ambiguous, ["AAA"]);
+  // the draft survives as its own row; AAA 20/200 keeps its own values
+  assert.deepEqual(brief(out.rows).sort(), [["AAA", "12", "120"], ["AAA", "20", "200"], ["AAA", "30", "300"], ["BBB", "7", ""]].sort());
+  assert.ok(!out.rows.some((r) => r.lot_id === "lot_a"), "the dead id is gone");
+  // whatever a later save sends, no edit to lot_b: the draft only re-adds its own row as a new lot
   const patch = holdingsPatch(out.base, out.rows);
-  assert.deepEqual(patch.remove, ["CCC"]);
-  assert.deepEqual(patch.upsert, [{ symbol: "BBB", quantity: 8 }]);
+  assert.deepEqual(patch.remove, []);
+  assert.deepEqual(patch.upsert, [{ symbol: "AAA", quantity: 12, cost_basis: 120, new_lot: true }]);
+  assert.ok(!JSON.stringify(patch).includes("lot_b"));
+});
+
+test("rebaseLots: untouched lots that vanished follow the server, new lots appear, removed rows stay removed", () => {
+  const { rebaseLots } = ctx;
+  const base = asRows(ctx, lotsOf(["AAA", 11, 100, "lot_a"], ["BBB", 7, undefined, "lot_b"], ["CCC", 1, undefined, "lot_c"]));
+  const draft = [{ ...base[0] }, { ...base[1], quantity: "8" }]; // CCC removed by the user, AAA untouched
+  const out = rebaseLots(base, draft, lotsOf(["BBB", 7, undefined, "lot_b"], ["CCC", 1, undefined, "lot_c"], ["DDD", 4, undefined, "lot_d"]));
+  assert.deepEqual(out.ambiguous, []); // AAA was untouched and removed by the agent: nothing to keep
+  assert.deepEqual(out.rows.map((r) => [r.symbol, r.quantity]), [["BBB", "8"], ["DDD", "4"]]);
+  const patch = holdingsPatch(out.base, out.rows);
+  assert.deepEqual(patch.remove, [{ symbol: "CCC", lot_id: "lot_c" }]);
+  assert.deepEqual(patch.upsert, [{ symbol: "BBB", quantity: 8, lot_id: "lot_b" }]);
+});
+
+test("rebaseLots: legacy rows without a lot_id are ambiguous when touched and never auto-written", () => {
+  const { rebaseLots } = ctx;
+  const base = asRows(ctx, lotsOf(["AAA", 11, 100], ["AAA", 20, 200], ["BBB", 7]));
+  const draft = [{ ...base[0], cost_basis: "110" }, { ...base[1] }, { ...base[2] }];
+  const out = rebaseLots(base, draft, lotsOf(["AAA", 11, 100, "lot_x"], ["AAA", 20, 200, "lot_y"], ["BBB", 7, undefined, "lot_z"]));
+  assert.deepEqual(out.ambiguous, ["AAA"]);
+  assert.equal(out.rows.find((r) => r._k === "l0").cost_basis, "110");
+  assert.deepEqual(out.base.filter((r) => r.symbol === "AAA").map((r) => r._k), ["l0", "l1"]); // old baseline kept, server AAA not adopted twice
+  assert.equal(out.rows.filter((r) => r.symbol === "AAA").length, 2);
 });
 
 test("the save conflict path keeps the draft: it rebases and retries instead of forcing a reset", async () => {

@@ -35,6 +35,7 @@ export function holdingFromRow(row) {
   if (row.snapshot_id) out.snapshot_id = row.snapshot_id;
   if (row.currency) out.currency = row.currency;
   if (row.cost_basis !== "" && row.cost_basis != null) out.cost_basis = Number(row.cost_basis);
+  if (row.lot_id) out.lot_id = row.lot_id;
   return out;
 }
 
@@ -45,8 +46,10 @@ const lotMatch = (h) => ({ quantity: h.quantity, cost_basis: h.cost_basis ?? nul
  * What the user changed in the holdings table, as `{upsert, remove}` for the PATCH endpoint. Rows are paired with their
  * baseline row by identity (`_k` when the editor sets it, else the n-th occurrence of the symbol), so several lots of one
  * symbol diff like any others: edited rows send only their changed fields (a cleared field is null), added rows go whole,
- * removed rows go as a symbol. A symbol held in more than one lot is addressed by `match` (the lot's previous values), an
- * added extra lot carries `new_lot: true`; the server answers a conflict when that lot changed meanwhile. Never null.
+ * removed rows go as a symbol. A row that carries the server's `lot_id` is addressed by it (edited: `{symbol, ...delta, lot_id}`,
+ * removed: `{symbol, lot_id}`), so it is exactly that lot or a conflict. Only legacy rows without an id fall back to `match` (the
+ * lot's previous values) when their symbol has several lots. New rows carry no id; an extra lot of an existing symbol carries
+ * `new_lot: true`. Never null.
  */
 export function holdingsPatch(baseRows, draftRows) {
   const keyed = (rows) => {
@@ -69,10 +72,12 @@ export function holdingsPatch(baseRows, draftRows) {
   for (const { key, h } of base) {
     const now = draftByKey.get(key);
     if (now && now.symbol === h.symbol) continue;
-    if (count(base, h.symbol) === 1 && count(draft, h.symbol) === 0) remove.push(h.symbol);
+    if (h.lot_id) remove.push({ symbol: h.symbol, lot_id: h.lot_id });
+    else if (count(base, h.symbol) === 1 && count(draft, h.symbol) === 0) remove.push(h.symbol);
     else remove.push(lotRef(h));
   }
-  for (const { key, h } of draft) {
+  for (const { key, h: drafted } of draft) {
+    const { lot_id: _ignored, ...h } = drafted; // a new row never carries an id: the server names it
     const prev = baseByKey.get(key);
     if (!prev || prev.symbol !== h.symbol) {
       upsert.push(count(base, h.symbol) > 0 || count(draft, h.symbol) > 1 ? { ...h, new_lot: true } : h);
@@ -83,6 +88,7 @@ export function holdingsPatch(baseRows, draftRows) {
       if (h[field] !== prev[field]) delta[field] = h[field] === undefined ? null : h[field];
     }
     if (!Object.keys(delta).length) continue;
+    if (prev.lot_id) { upsert.push({ symbol: h.symbol, ...delta, lot_id: prev.lot_id }); continue; }
     const several = count(base, h.symbol) > 1 || count(draft, h.symbol) > 1;
     upsert.push(several ? { symbol: h.symbol, ...delta, match: lotMatch(prev) } : { symbol: h.symbol, ...delta });
   }
@@ -100,61 +106,65 @@ export function rowFromHolding(h, key) {
 }
 
 /**
- * Re-bases an unsaved holdings form onto the lots stored now (after a save conflict), without losing the draft.
- * Every baseline row is paired with the current lot of the same symbol and the same occurrence index; a symbol whose number
- * of lots changed meanwhile cannot be paired and is "ambiguous" when the user touched it (otherwise the current lots are
- * simply adopted). For paired rows the new baseline is the current lot and the form keeps the user's changed fields on top
- * of the current values of the others (the assistant's quantity edit plus the user's cost edit). Ambiguous symbols keep
- * their draft rows and their old baseline rows untouched. Returns `{ base, rows, ambiguous }`.
+ * Re-bases an unsaved holdings form onto the lots stored now (after a save conflict), without losing the draft. Lots are paired
+ * strictly by the server's `lot_id`, never by symbol or position:
+ *  - a baseline row whose lot still exists is rebased: the new baseline is the current lot and the form keeps the user's changed
+ *    fields on top of the current values of the others (the assistant's quantity edit plus the user's cost edit);
+ *  - a baseline row whose lot is gone and that the user did not touch (or already removed) simply follows the server;
+ *  - a baseline row whose lot is gone but that the user edited is a conflict: the draft row is kept (as a new row, without the
+ *    dead id) and its symbol is reported in `ambiguous`; nothing may be written on its behalf to any other lot;
+ *  - rows without a `lot_id` (legacy) cannot be paired: when the user touched them they are kept as they were and reported as
+ *    ambiguous, otherwise they follow the server.
+ * The caller must not retry automatically while `ambiguous` is not empty. Returns `{ base, rows, ambiguous }`.
  */
 export function rebaseLots(baseRows, draftRows, serverHoldings) {
   const gen = ++rebases;
   const server = (serverHoldings || []).map((h, i) => rowFromHolding(h, `s${gen}_${i}`));
+  const serverById = new Map(server.filter((s) => s.lot_id).map((s) => [s.lot_id, s]));
   const base = (baseRows || []).filter((r) => rowSymbol(r));
   const draft = draftRows || [];
-  const bySymbol = (rows) => {
-    const m = new Map();
-    for (const r of rows) { const s = rowSymbol(r); if (!m.has(s)) m.set(s, []); m.get(s).push(r); }
-    return m;
-  };
-  const baseBy = bySymbol(base);
-  const serverBy = bySymbol(server);
   const draftByKey = new Map(draft.map((r) => [r._k, r]));
-  const baseKeys = new Set(base.map((r) => r._k));
-  const unchangedBase = new Set(base.filter((b) => { const d = draftByKey.get(b._k); return d && sameFields(b, d); }).map((b) => b._k));
-  const touched = (symbol) => (baseBy.get(symbol) || []).some((b) => !unchangedBase.has(b._k))
-    || draft.some((d) => rowSymbol(d) === symbol && !unchangedBase.has(d._k));
   const ambiguous = [];
-  const adopt = new Set();
-  const paired = new Map();
-  for (const [symbol, lots] of baseBy) {
-    const current = serverBy.get(symbol) || [];
-    if (current.length === lots.length) lots.forEach((b, i) => paired.set(b._k, current[i]));
-    else if (touched(symbol)) ambiguous.push(symbol);
-    else adopt.add(symbol);
+  const flag = (symbol) => { if (!ambiguous.includes(symbol)) ambiguous.push(symbol); };
+  const paired = new Map(); // baseline _k -> current server row
+  const dropped = new Set(); // baseline _k that follow the server (their draft row is not emitted)
+  const orphans = new Set(); // baseline _k of a gone lot the user edited: the draft survives as a new row
+  const legacyKept = new Set(); // baseline _k of legacy rows the user touched
+  const legacySymbols = new Set();
+  for (const b of base) {
+    const d = draftByKey.get(b._k);
+    const untouched = d && sameFields(b, d);
+    if (b.lot_id) {
+      const s = serverById.get(b.lot_id);
+      if (s) paired.set(b._k, s);
+      else if (!d || untouched) dropped.add(b._k);
+      else { orphans.add(b._k); flag(rowSymbol(d)); }
+    } else if (untouched) dropped.add(b._k);
+    else { legacyKept.add(b._k); legacySymbols.add(rowSymbol(b)); flag(rowSymbol(b)); }
   }
+  // the legacy rows of a symbol the user touched stay together, so the form keeps one consistent set for it
+  for (const b of base) if (!b.lot_id && dropped.has(b._k) && legacySymbols.has(rowSymbol(b))) { dropped.delete(b._k); legacyKept.add(b._k); }
   const rows = [];
-  const emitted = new Set();
   for (const d of draft) {
     const p = paired.get(d._k);
     if (p) {
       const b = base.find((x) => x._k === d._k);
       const mine = Object.fromEntries(ROW_FIELDS.filter((f) => String(b[f] ?? "") !== String(d[f] ?? "")).map((f) => [f, d[f]]));
       rows.push({ ...p, ...mine, _k: p._k });
-    } else if (baseKeys.has(d._k) && adopt.has(rowSymbol(base.find((x) => x._k === d._k)))) {
-      const symbol = rowSymbol(base.find((x) => x._k === d._k));
-      if (!emitted.has(symbol)) { emitted.add(symbol); rows.push(...(serverBy.get(symbol) || [])); }
-    } else rows.push(d);
+    } else if (orphans.has(d._k)) {
+      const { lot_id: _dead, ...rest } = d;
+      rows.push(rest);
+    } else if (!dropped.has(d._k)) rows.push(d);
   }
-  // current lots of symbols the form never knew about, and adopted symbols that had no draft row left to anchor them
-  for (const s of server) {
-    const symbol = rowSymbol(s);
-    if (!baseBy.has(symbol) && !ambiguous.includes(symbol) && !rows.some((r) => r._k === s._k)) rows.push(s);
-  }
-  for (const symbol of adopt) if (!emitted.has(symbol)) rows.push(...(serverBy.get(symbol) || []));
+  const pairedKeys = new Set([...paired.values()].map((s) => s._k));
+  const knownIds = new Set(base.filter((b) => b.lot_id).map((b) => b.lot_id));
   const newBase = [];
-  for (const s of server) if (!ambiguous.includes(rowSymbol(s))) newBase.push(s);
-  for (const b of base) if (ambiguous.includes(rowSymbol(b))) newBase.push(b);
+  for (const s of server) {
+    if (legacySymbols.has(rowSymbol(s)) && !pairedKeys.has(s._k)) continue; // would duplicate the legacy rows kept below
+    newBase.push(s);
+    if (!knownIds.has(s.lot_id)) rows.push(s); // a lot added meanwhile by someone else appears in the form
+  }
+  for (const b of base) if (legacyKept.has(b._k)) newBase.push(b);
   return { base: newBase, rows, ambiguous };
 }
 
