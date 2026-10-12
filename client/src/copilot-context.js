@@ -130,35 +130,51 @@ export async function buildContext({ api = realApi, hash, read = publishedView, 
   const route = parseRoute(hash ?? (typeof window !== "undefined" ? window.location.hash : ""));
   const objects = [];
   const view = { page: route.page };
+  // Published view state and form snapshots are captured synchronously, before the first await: the user may navigate or keep
+  // typing while a fetch is pending, and the context must describe one single view. After a fetch, a snapshot is used only when it
+  // was taken for the very object that came back; otherwise there is none rather than a late one.
+  const readState = (key) => ({ ...(read(key) || {}) });
+  const snap = new Map();
+  const grab = (key) => { if (!snap.has(key)) snap.set(key, editor(key)); return snap.get(key); };
   try {
     if (route.page === "theses") {
-      const state = read("theses") || {};
+      const state = readState("theses");
       if (state.creating || !route.param || route.param === "new") {
         view.object_id = "new";
-        view.editor = editor("thesis:new");
+        view.editor = grab("thesis:new");
       } else {
-        const th = await lookup(() => api.thesis(route.param));
+        const wanted = route.param;
+        grab(`evidence:${wanted}`);
+        const th = await lookup(() => api.thesis(wanted));
         if (th && th.id) {
           objects.push({ kind: "thesis", object_id: th.id, title: th.title, status: th.status, as_of: th.as_of, ref: th.ref });
           view.object_id = th.id;
           view.tab = state.tab;
-          view.editor = editor(`evidence:${th.id}`);
+          view.editor = th.id === wanted ? snap.get(`evidence:${wanted}`) : undefined;
         }
       }
     } else if (route.page === "portfolio") {
-      const state = read("portfolio") || {};
-      const found = state.selected ? await lookup(() => api.portfolio(state.selected)) : null;
+      const state = readState("portfolio");
+      const selected = state.selected;
+      if (selected) grab(`portfolio:${selected}`);
+      grab("portfolio:new");
+      const found = selected ? await lookup(() => api.portfolio(selected)) : null;
       if (found && found.name) {
         objects.push({ kind: "portfolio", object_id: found.name, title: found.name, currency: found.currency, holdings: (found.holdings || []).length });
         view.object_id = found.name;
-        view.editor = editor(`portfolio:${found.name}`);
+        view.editor = found.name === selected ? snap.get(`portfolio:${selected}`) : undefined;
       } else {
         view.object_id = "new";
-        view.editor = editor("portfolio:new");
+        view.editor = snap.get("portfolio:new");
       }
     } else if (route.page === "lab") {
-      const lab = read("lab") || {};
-      const spec = read("lab-spec") || {};
+      const lab = readState("lab");
+      const spec = readState("lab-spec");
+      const strategyId = spec.strategyId;
+      if (lab.tab === "backtest") {
+        if (strategyId) grab(`strategy:${strategyId}`);
+        grab("strategy:new");
+      }
       view.tab = lab.tab;
       const runId = lab.tab === "opened" ? lab.openedId : lab.tab === "backtest" ? spec.runId : null;
       if (runId) {
@@ -169,14 +185,15 @@ export async function buildContext({ api = realApi, hash, read = publishedView, 
         }
       }
       if (lab.tab === "backtest") {
-        const strategy = spec.strategyId ? await lookup(() => api.strategy(spec.strategyId)) : null;
+        const strategy = strategyId ? await lookup(() => api.strategy(strategyId)) : null;
         if (strategy && strategy.id) objects.push({ kind: "strategy", object_id: strategy.id, title: strategy.name });
-        view.editor = editor(`strategy:${strategy && strategy.id ? strategy.id : "new"}`);
+        view.editor = strategy && strategy.id ? (strategy.id === strategyId ? snap.get(`strategy:${strategyId}`) : undefined) : snap.get("strategy:new");
         if (!view.object_id) view.object_id = strategy && strategy.id ? strategy.id : "new";
       }
     } else if (route.page === "market") {
-      const state = read("market") || {};
-      const ids = Array.isArray(state.selected) ? state.selected : [];
+      const state = readState("market");
+      const ids = Array.isArray(state.selected) ? [...state.selected] : [];
+      grab("snapshot:new");
       if (ids.length) {
         const list = await lookup(() => api.snapshots({ limit: 100 }));
         for (const s of (list && list.snapshots) || []) {
@@ -185,7 +202,7 @@ export async function buildContext({ api = realApi, hash, read = publishedView, 
         if (objects.length) view.object_id = objects[0].object_id;
       }
       view.tab = state.tab;
-      view.editor = editor("snapshot:new");
+      view.editor = snap.get("snapshot:new");
     }
   } catch {
     // the context is best effort: a failing read must never break the turn

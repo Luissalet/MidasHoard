@@ -123,3 +123,32 @@ test("turn end refreshes once even when the launcher fires both the event and th
   assert.equal(n, 2);
   off();
 });
+
+test("form snapshots and view state are captured before the fetches, not after them", async () => {
+  let gate = null;
+  const held = (fn) => (...args) => new Promise((resolve) => { gate = () => resolve(fn(...args)); });
+  const slowApi = { ...fakeApi, thesis: held(fakeApi.thesis), portfolio: held(fakeApi.portfolio), strategy: held(fakeApi.strategy), snapshots: held(fakeApi.snapshots) };
+  let draft = "before";
+  const editor = (id) => ({ asked: id, text: draft });
+  const run = async (hash, state, mutate) => {
+    const pending = buildContext({ api: slowApi, hash, read: (key) => state[key], editor });
+    draft = "typed while the fetch was pending";
+    mutate();
+    gate();
+    const out = await pending;
+    draft = "before";
+    return out;
+  };
+  const theses = await run("#/theses/th_1", { theses: { tab: "evidence" } }, () => {});
+  assert.deepEqual(theses.view.editor, { asked: "evidence:th_1", text: "before" });
+  const pstate = { portfolio: { selected: "main" } };
+  const portfolio = await run("#/portfolio", pstate, () => { pstate.portfolio.selected = "ghost"; });
+  assert.equal(portfolio.view.object_id, "main");
+  assert.deepEqual(portfolio.view.editor, { asked: "portfolio:main", text: "before" });
+  const lstate = { lab: { tab: "backtest" }, "lab-spec": { strategyId: "st_1" } };
+  const lab = await run("#/lab", lstate, () => { lstate["lab-spec"].strategyId = null; lstate.lab.tab = "experiments"; });
+  assert.equal(lab.view.tab, "backtest");
+  assert.deepEqual(lab.view.editor, { asked: "strategy:st_1", text: "before" });
+  const market = await run("#/market", { market: { selected: ["snp_a"], tab: "manual" } }, () => {});
+  assert.deepEqual(market.view.editor, { asked: "snapshot:new", text: "before" });
+});
