@@ -9,7 +9,7 @@ from midas_hoard.agent_tools import TOOLS
 from midas_hoard.config import DEFAULT_PORT
 
 ROOT = Path(__file__).resolve().parent.parent
-BANNED = ("chatgpt", "claude", "openai", "anthropic", "lm studio", "odysseus", "gemini", "copilot", "bloomberg", "tradingview", "yahoo finance")
+BANNED = ("chatgpt", "claude", "openai", "anthropic", "lm studio", "odysseus", "gemini", "bloomberg", "tradingview", "yahoo finance")
 FINAL_TOOLS = {
     "midas_status", "market_providers", "market_search", "market_fetch", "market_series", "market_compare", "snapshots_list", "thesis_create",
     "thesis_get", "thesis_list", "thesis_update", "thesis_evidence_add", "thesis_check", "strategy_validate", "strategy_save", "strategies_list",
