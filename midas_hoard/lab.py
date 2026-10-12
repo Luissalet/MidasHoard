@@ -24,6 +24,7 @@ from .db import Database
 from .errors import MidasError
 from .hoard_link.atomic import write_json_atomic, write_text_atomic
 from .hoard_link.artifacts import ArtifactRef
+from .patching import merge_patch
 from .snapshots import Snapshot, SnapshotStore, provenance
 from .strategy import spec_hash, validate_spec
 
@@ -93,6 +94,16 @@ class Lab:
             self.db.execute("INSERT INTO strategies(id, name, spec, spec_hash, note, created_ts, updated_ts) VALUES (?,?,?,?,?,?,?)",
                             (sid, n["name"], json.dumps(n), check["spec_hash"], note or n["note"], now, now))
         return {"id": sid, "name": n["name"], "spec_hash": check["spec_hash"], "updated": bool(existing), "summary": check["summary"]}
+
+    def patch_strategy(self, ident: str, spec_patch: dict[str, Any], note: Optional[str] = None) -> dict[str, Any]:
+        """Atomic partial update of a saved strategy: merge ``spec_patch`` (objects merge, arrays replace, null removes)
+        into its stored spec and save it again under the same name."""
+        with self.db.transaction():
+            current = self.strategy(ident)
+            merged = merge_patch(current["spec"], spec_patch)
+            if merged.get("name") != current["name"]:
+                raise MidasError("invalid_request", "spec_patch cannot rename a strategy.", "Save the full spec under the new name instead.")
+            return self.save_strategy(merged, current["note"] if note is None else note)
 
     def strategy(self, ident: str) -> dict[str, Any]:
         row = self.db.one("SELECT * FROM strategies WHERE id = ? OR name = ?", (ident, ident))

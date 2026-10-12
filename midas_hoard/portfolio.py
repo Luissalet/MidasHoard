@@ -104,6 +104,39 @@ class Portfolios:
                         (name, ccy, json.dumps(clean), self.clock()))
         return {"name": name, "currency": ccy, "holdings": clean, "count": len(clean), "replaced": bool(existing and replace)}
 
+    def patch(self, name: str, *, currency: Optional[str] = None, upsert: Optional[list[dict[str, Any]]] = None,
+              remove: Optional[list[str]] = None) -> dict[str, Any]:
+        """Atomic partial update: remove holdings by symbol, then merge the provided fields of each upserted holding
+        (a ``null`` or empty field drops it; an unknown symbol is appended). Other holdings and fields are untouched."""
+        with self.db.transaction():
+            current = self.get(name)
+            rows = [dict(h) for h in current["holdings"]]
+            for sym in remove or []:
+                key = str(sym).strip()
+                rows = [r for r in rows if r.get("symbol") != key]
+            for item in upsert or []:
+                sym = str(item.get("symbol", "")).strip()
+                if not sym:
+                    raise MidasError("invalid_request", "Every upserted holding needs a symbol.", "Holdings are matched by symbol.")
+                matches = [r for r in rows if r.get("symbol") == sym]
+                if len(matches) > 1:
+                    raise MidasError("invalid_request", f"'{sym}' appears in several lots of '{name}'.", "Replace the whole portfolio with portfolio_set.")
+                fields = {k: v for k, v in item.items() if k != "symbol"}
+                if matches:
+                    for k, v in fields.items():
+                        if v is None or v == "":
+                            matches[0].pop(k, None)
+                        else:
+                            matches[0][k] = v
+                else:
+                    rows.append({"symbol": sym, **{k: v for k, v in fields.items() if v is not None and v != ""}})
+            clean = self._clean(rows)
+            ccy = (currency or current["currency"]).upper()
+            if len(ccy) != 3:
+                raise MidasError("invalid_request", f"Currency '{ccy}' is not a 3-letter code.", "Use EUR, USD...")
+            self.db.execute("UPDATE portfolios SET currency=?, holdings=?, updated_ts=? WHERE name=?", (ccy, json.dumps(clean), self.clock(), name))
+            return {"name": name, "currency": ccy, "holdings": clean, "count": len(clean), "patched": True}
+
     def get(self, name: str) -> dict[str, Any]:
         row = self.db.one("SELECT * FROM portfolios WHERE name = ?", (name,))
         if row is None:

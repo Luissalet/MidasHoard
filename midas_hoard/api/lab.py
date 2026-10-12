@@ -37,6 +37,12 @@ def strategy_save(request: Request, body: dict[str, Any]):
     return tool(request, "strategy_save", {"action": "save", "spec": body.get("spec"), "note": body.get("note", "")})
 
 
+@router.patch("/strategies/{ident}")
+def strategy_patch(request: Request, ident: str, body: dict[str, Any]):
+    """Merge only ``spec_patch`` (and optionally ``note``) into a saved strategy."""
+    return tool(request, "strategy_save", {"id": ident, "spec_patch": body.get("spec_patch"), "note": body.get("note") or ""})
+
+
 @router.delete("/strategies/{ident}")
 def strategy_delete(request: Request, ident: str):
     return tool(request, "strategy_save", {"action": "delete", "id": ident, "confirm": True})

@@ -26,6 +26,12 @@ def portfolio_set(request: Request, name: str, body: dict[str, Any]):
     return tool(request, "portfolio_set", {**body, "name": name, "action": "set"})
 
 
+@router.patch("/portfolios/{name}")
+def portfolio_patch(request: Request, name: str, body: dict[str, Any]):
+    """Merge only the given currency / upsert / remove into the portfolio (no full replacement)."""
+    return tool(request, "portfolio_set", {**clean(body), "name": name, "action": "patch"})
+
+
 @router.delete("/portfolios/{name}")
 def portfolio_delete(request: Request, name: str):
     return tool(request, "portfolio_set", {"name": name, "action": "delete", "confirm": True})

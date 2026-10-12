@@ -157,7 +157,8 @@ class StrategySaveArgs(BaseModel):
     action: Literal["save", "delete"] = "save"
     confirm: bool = False
     spec: Optional[dict[str, Any]] = None
-    id: Optional[str] = Field(None, max_length=80, description="For action=delete: strategy id or name.")
+    spec_patch: Optional[dict[str, Any]] = Field(None, description="Atomically merges into the saved strategy named by id instead of replacing it: objects merge, arrays replace, null removes a key.")
+    id: Optional[str] = Field(None, max_length=80, description="Strategy id or name: for action=delete, and for spec_patch.")
     note: str = Field("", max_length=500)
 
 
@@ -202,8 +203,10 @@ class CommitteeArgs(BaseModel):
 # ---------------------------------------------------------------- portfolio
 class PortfolioSetArgs(BaseModel):
     name: str = Field("default", min_length=1, max_length=60)
-    action: Literal["set", "delete"] = "set"
+    action: Literal["set", "delete", "patch"] = Field("set", description="patch atomically merges upsert/remove/currency into the existing portfolio, leaving other holdings as they are.")
     confirm: bool = False
+    upsert: Optional[list[dict[str, Any]]] = Field(None, description="patch: holdings matched by symbol; only the given fields change (null drops one); unknown symbols are added.")
+    remove: Optional[list[str]] = Field(None, description="patch: symbols to remove.")
     holdings: Optional[list[dict[str, Any]]] = Field(None, description='[{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}]')
     csv_text: Optional[str] = Field(None, max_length=1_000_000, description="CSV with header: symbol,quantity[,snapshot_id,currency,cost_basis,label]")
     path: Optional[str] = Field(None, max_length=1000)
@@ -323,6 +326,10 @@ def run_strategy_save(svc: Services, args: StrategySaveArgs) -> dict:
         if not args.id:
             raise MidasError("invalid_request", "action=delete needs id (strategy id or name).", "List them with strategies_list.")
         return svc.lab.delete_strategy(args.id)
+    if args.spec_patch is not None:
+        if not args.id:
+            raise MidasError("invalid_request", "spec_patch needs id (strategy id or name).", "List them with strategies_list.")
+        return svc.lab.patch_strategy(args.id, args.spec_patch, args.note or None)
     if args.spec is None:
         raise MidasError("invalid_request", "action=save needs a spec.", "Validate it first with strategy_validate.")
     return svc.lab.save_strategy(args.spec, args.note)
@@ -361,6 +368,8 @@ def run_portfolio_set(svc: Services, args: PortfolioSetArgs) -> dict:
     if args.action == "delete":
         _confirm("delete", args.confirm, f"portfolio '{args.name}'")
         return svc.portfolios.delete(args.name)
+    if args.action == "patch":
+        return svc.portfolios.patch(args.name, currency=args.currency, upsert=args.upsert, remove=args.remove)
     return svc.portfolios.set(args.name, holdings=args.holdings, csv_text=args.csv_text, path=args.path, currency=args.currency, replace=args.replace)
 
 
