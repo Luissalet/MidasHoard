@@ -4,6 +4,7 @@ import { useApp } from "../App.jsx";
 import { BarList, Chip, ConfirmButton, Empty, ErrorBox, Field, Kpi, LineChart, Provenance } from "../components/ui.jsx";
 import { SERIES_COLORS, money, num, pct, signClass } from "../format.js";
 import { holdingFromRow, holdingsPatch, rebaseLots } from "../copilot-context.js";
+import { autoSelect, selectionAfterCancel } from "../portfolio-selection.js";
 import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 // `_k` is the row's identity in the form (not sent anywhere): loaded rows are l0, l1... so the baseline and the form agree; added rows get n1, n2...
@@ -237,6 +238,8 @@ export default function Portfolio() {
   const { t } = useApp();
   const [list, setList] = useState([]);
   const [selected, setSelected] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const previous = useRef(null);
   const [snapshots, setSnapshots] = useState([]);
   const [detail, setDetail] = useState(null);
   const [error, setError] = useState(null);
@@ -259,23 +262,30 @@ export default function Portfolio() {
   // an assistant turn ended: reload the lists and the open portfolio in place; the editor keeps whatever the user is typing
   useRefreshOnTurnEnd(() => Promise.all([load(), loadDetail()]));
   usePublishView("portfolio", { selected });
-  useEffect(() => { if (!selected && list.length) setSelected(list[0].name); }, [list, selected]);
+  useEffect(() => {
+    const next = autoSelect(list, selected, creating);
+    if (next) setSelected(next);
+  }, [list, selected, creating]);
+  const startCreating = () => { previous.current = selected; setCreating(true); setSelected(null); setDetail(null); };
+  const cancelCreating = () => { setCreating(false); setSelected(selectionAfterCancel(list, previous.current)); };
+  const pick = (name) => { setCreating(false); setSelected(name); };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between"><h1>{t("nav_portfolio")}</h1><button type="button" className="btn" onClick={() => { setSelected(null); setDetail(null); }}>{t("new_portfolio")}</button></div>
+      <div className="flex items-center justify-between"><h1>{t("nav_portfolio")}</h1><button type="button" className="btn" onClick={startCreating}>{t("new_portfolio")}</button></div>
       <ErrorBox error={error} t={t} />
       <div className="flex flex-wrap gap-2">
         {list.map((p) => (
           <span key={p.name} className="inline-flex items-center gap-1">
-            <button type="button" className={`btn btn-sm ${selected === p.name ? "btn-primary" : ""}`} onClick={() => setSelected(p.name)}>{p.name} <span className="opacity-70">({p.holdings})</span></button>
+            <button type="button" className={`btn btn-sm ${selected === p.name ? "btn-primary" : ""}`} onClick={() => pick(p.name)}>{p.name} <span className="opacity-70">({p.holdings})</span></button>
           </span>
         ))}
+        {creating && <button type="button" className="btn btn-sm" onClick={cancelCreating}>{t("cancel")}</button>}
         {selected && <ConfirmButton t={t} onConfirm={async () => { await api.portfolioDelete(selected); setSelected(null); setVersion((v) => v + 1); }} />}
       </div>
       {!selected && list.length === 0 && <Empty>{t("portfolio_empty")}</Empty>}
       <div className="grid gap-4 xl:grid-cols-[600px_minmax(0,1fr)]">
-        <Editor snapshots={snapshots} initial={selected ? detail : null} onSaved={(n) => { setSelected(n); setVersion((v) => v + 1); }} />
+        <Editor snapshots={snapshots} initial={selected ? detail : null} onSaved={(n) => { setCreating(false); setSelected(n); setVersion((v) => v + 1); }} />
         <div className="min-w-0">{selected ? <Analysis name={selected} snapshots={snapshots} holdings={detail?.holdings} base={detail?.currency || "EUR"} /> : null}</div>
       </div>
     </div>
