@@ -27,7 +27,7 @@ def test_manifest_matches_code():
 
 def test_manifest_has_only_allowed_top_level_keys():
     manifest = json.loads((ROOT / "faustus-plugin.json").read_text(encoding="utf-8"))
-    assert set(manifest) <= {"schema", "id", "name", "purpose", "capabilities", "placeholders", "defaults", "app", "mcp", "notes"}
+    assert set(manifest) <= {"schema", "id", "name", "purpose", "capabilities", "placeholders", "defaults", "app", "mcp", "x-family", "notes"}
     assert manifest["mcp"]["env"].keys() >= {"MIDAS_URL", "MIDAS_TOKEN_FILE"}
 
 

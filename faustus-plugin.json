@@ -85,5 +85,8 @@
       "MIDAS_DATA_DIR"
     ]
   },
+  "x-family": {
+    "copilot": true
+  },
   "notes": "Keep the app running (python -m midas_hoard); the MCP bridge proxies every call to the local server, never opens the database, and starts the app itself when it is not answering. Everything is historical analysis for research, never investment advice. market_fetch, thesis_create/update/evidence_add, strategy_save, portfolio_set and the committee write to the local store; deletes need confirm:true on the owning tool and only when the user asks."
 }
