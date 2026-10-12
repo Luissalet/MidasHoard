@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { Chip, ConfirmButton, CopyButton, Empty, ErrorBox, Field, Issues, Provenance, StatePill, StatusPill, Tabs } from "../components/ui.jsx";
 import { clock, num, splitList } from "../format.js";
-import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 const STATUSES = ["open", "confirmed", "invalidated", "expired", "archived"];
 

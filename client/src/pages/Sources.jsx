@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { Chip, ErrorBox, Provenance } from "../components/ui.jsx";
 import { shortHash } from "../format.js";
-import { useRefreshOnTurnEnd } from "../copilot-hooks.js";
+import { useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 export default function Sources() {
   const { t } = useApp();

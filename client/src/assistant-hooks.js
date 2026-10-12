@@ -1,15 +1,15 @@
-// React glue for the copilot context: publish what a page shows, answer context requests from forms, refresh on turn end.
+// React glue for the assistant context: publish what a page shows, answer context requests from forms, refresh on turn end.
 import { useEffect, useRef } from "react";
 import { onRefresh, publishView } from "./copilot-context.js";
 
-/** Runs `refresh` whenever a copilot turn ends. It must reload data in place (no remounts, no form resets). */
+/** Runs `refresh` whenever an assistant turn ends. It must reload data in place (no remounts, no form resets). */
 export function useRefreshOnTurnEnd(refresh) {
   const latest = useRef(refresh);
   latest.current = refresh;
   useEffect(() => onRefresh(() => { try { const r = latest.current(); if (r && r.catch) r.catch(() => {}); } catch { /* best effort */ } }), []);
 }
 
-/** Tells the copilot what the page shows (ids, tab, mode) under `key`. */
+/** tells the assistant what the page shows (ids, tab, mode) under `key`. */
 export function usePublishView(key, value) {
   const serial = JSON.stringify(value);
   useEffect(() => publishView(key, value), [key, serial]);

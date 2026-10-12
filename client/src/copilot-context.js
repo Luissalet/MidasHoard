@@ -1,4 +1,4 @@
-// Domain side of the Faustus copilot: what is open in the view (real ids read through the app's own API),
+// Domain side of the Faustus assistant: what is open in the view (real ids read through the app's own API),
 // the unsaved form fields, the minimal "what the user changed" payloads, and the refresh when a turn ends.
 // The panel, relay and launcher are generic and live elsewhere; this module only exposes window.hoardCopilot.
 import { api as realApi } from "./api.js";

@@ -4,7 +4,7 @@ import { useApp } from "../App.jsx";
 import { BarList, Chip, ConfirmButton, Empty, ErrorBox, Field, Kpi, LineChart, Provenance } from "../components/ui.jsx";
 import { SERIES_COLORS, money, num, pct, signClass } from "../format.js";
 import { holdingFromRow, holdingsPatch } from "../copilot-context.js";
-import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 const blank = () => ({ symbol: "", quantity: "", snapshot_id: "", currency: "", cost_basis: "" });
 const rowsFrom = (initial) => (initial?.holdings?.length ? initial.holdings.map((h) => ({ ...blank(), ...h, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [blank()]);
@@ -27,7 +27,7 @@ function Editor({ snapshots, initial, onSaved }) {
     const c = latest.current;
     return c.name !== b.name || c.currency !== b.currency || JSON.stringify(c.rows) !== JSON.stringify(b.rows) || c.csv.trim() !== "";
   };
-  // A reload (after a save, a copilot turn, or switching portfolio) only replaces the form when the user has nothing unsaved:
+  // A reload (after a save, an assistant turn, or switching portfolio) only replaces the form when the user has nothing unsaved:
   // otherwise the draft is kept and the baseline stays, so a later save sends just the user's own changes.
   useEffect(() => {
     const switched = (initial?.name ?? null) !== base.current.loaded;
@@ -222,7 +222,7 @@ export default function Portfolio() {
     return api.portfolio(selected).then((d) => setDetail({ name: d.name, currency: d.currency, holdings: d.holdings })).catch((e) => { setDetail({ name: selected, currency: "EUR", holdings: [] }); setError(e); });
   }, [selected]);
   useEffect(() => { loadDetail(); }, [loadDetail, version]);
-  // a copilot turn ended: reload the lists and the open portfolio in place; the editor keeps whatever the user is typing
+  // an assistant turn ended: reload the lists and the open portfolio in place; the editor keeps whatever the user is typing
   useRefreshOnTurnEnd(() => Promise.all([load(), loadDetail()]));
   usePublishView("portfolio", { selected });
   useEffect(() => { if (!selected && list.length) setSelected(list[0].name); }, [list, selected]);

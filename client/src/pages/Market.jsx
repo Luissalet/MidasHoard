@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { BarList, Empty, ErrorBox, Field, Kpi, LineChart, Legend, Provenance, Tabs } from "../components/ui.jsx";
 import { SERIES_COLORS, num, pct, signClass } from "../format.js";
-import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 const ymd = (d) => d.toISOString().slice(0, 10);
 
@@ -172,7 +172,7 @@ export default function Market() {
     loadSnaps();
     api.providers().then((p) => setProviders(p.providers)).catch(() => {});
   }, [loadSnaps]);
-  // a copilot turn ended: reload the snapshots in place; the selection, the open series and the forms are left alone
+  // an assistant turn ended: reload the snapshots in place; the selection, the open series and the forms are left alone
   useRefreshOnTurnEnd(() => loadSnaps());
   usePublishView("market", { selected, tab });
   useContextProvider("snapshot:new", () => {

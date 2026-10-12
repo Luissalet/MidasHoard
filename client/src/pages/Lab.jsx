@@ -4,7 +4,7 @@ import { useApp } from "../App.jsx";
 import { Chip, ConfirmButton, Empty, ErrorBox, Field, Issues, Kpi, Legend, LineChart, NullBand, Tabs } from "../components/ui.jsx";
 import { SERIES_COLORS, clock, num, pct, signClass } from "../format.js";
 import { configPatch } from "../copilot-context.js";
-import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../copilot-hooks.js";
+import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 const WARN_CLASS = { none: "chip", low: "chip chip-amber", medium: "chip chip-amber", high: "chip chip-danger" };
 
@@ -204,7 +204,7 @@ function BacktestTab({ snapshots, refreshLog }) {
 
   const loadStrategies = useCallback(() => api.strategies().then((s) => setStrategies(s.strategies)).catch(() => {}), []);
   useEffect(() => { loadStrategies(); }, [loadStrategies]);
-  // A copilot turn ended: refresh the saved strategies, and show an agent edit of the open strategy unless the user has unsaved text.
+  // an assistant turn ended: refresh the saved strategies, and show an agent edit of the open strategy unless the user has unsaved text.
   useRefreshOnTurnEnd(async () => {
     loadStrategies();
     const { loaded: cur, text: current } = live.current;
