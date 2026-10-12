@@ -55,6 +55,7 @@ export const api = {
   strategies: () => request("GET", "/api/lab/strategies"),
   strategy: (id) => request("GET", `/api/lab/strategies/${enc(id)}`),
   strategySave: (spec, note) => request("POST", "/api/lab/strategies", { body: { spec, note } }),
+  strategyPatch: (id, body) => request("PATCH", `/api/lab/strategies/${enc(id)}`, { body }),
   strategyDelete: (id) => request("DELETE", `/api/lab/strategies/${enc(id)}`),
   backtest: (body) => request("POST", "/api/lab/backtests", { body }),
   backtestValidate: (id, body) => request("POST", `/api/lab/backtests/${enc(id)}/validate`, { body }),
@@ -64,6 +65,7 @@ export const api = {
   portfolios: () => request("GET", "/api/portfolios"),
   portfolio: (name) => request("GET", `/api/portfolios/${enc(name)}`),
   portfolioSet: (name, body) => request("PUT", `/api/portfolios/${enc(name)}`, { body }),
+  portfolioPatch: (name, body) => request("PATCH", `/api/portfolios/${enc(name)}`, { body }),
   portfolioDelete: (name) => request("DELETE", `/api/portfolios/${enc(name)}`),
   portfolioAnalyze: (name, body) => request("POST", `/api/portfolios/${enc(name)}/analyze`, { body: body || {} }),
 
