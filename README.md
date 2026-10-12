@@ -42,6 +42,16 @@ The client is built and committed under `midas_hoard/static`; rebuild it with `n
 
 Settings come from the environment: `MIDAS_DATA_DIR` (default `./data`), `MIDAS_PORT` (5192), `PORT_STRICT`, `MIDAS_ALLOWED_HOSTS`, `MIDAS_HTTP_TIMEOUT_S`, `MIDAS_CACHE_TTL_S`, `MIDAS_OFFLINE`. Data lives in `data/midas.db` (SQLite, WAL) plus `data/snapshots`, `data/runs` and `data/reports`; files are written atomically. The launcher, request guard, error envelope, stable `mcp-token`, SQLite layer, agent catalogue (20 KB result cap) and MCP bridge are the shared commons of Hoard Link (`midas_hoard/hoard_link/`); a second `python -m midas_hoard` on the same port exits instead of starting another copy.
 
+## Faustus assistant
+
+Once the shared Hoard Link launcher is installed, the app shows the family's Faustus panel (a floating button). The conversation, the model and the tools live in Faustus; this app only tells the panel what is open.
+
+- **Context per view.** The panel receives the objects open in the view, with real ids read through the app's own API: `thesis` (title, status, as-of date, reference), `portfolio` (name, currency, number of holdings), `experiment` (run id, strategy or family), `strategy` and `snapshot` (symbol, provider; the snapshots selected in Market). The view also gives the page and tab. Creation views (a new thesis, portfolio or strategy) report `new` and give no object. No holdings, evidence text or keys are sent.
+- **Unsaved fields.** The panel asks for them with the `midas:context-request` window event. The forms `thesis-form`, `evidence-form`, `portfolio-form`, `strategy-form` (spec text cut to 20,000 characters when it does not parse) and `snapshot-fetch-form` answer with their typed fields and `dirty`.
+- **Refresh.** When the assistant finishes a turn the open view reloads in place (`hoard:copilot-turn-end` / `window.hoardCopilot.onTurnEnd`) without remounting or resetting forms.
+- **Saving.** Forms send only what changed. New: `PATCH /api/portfolios/{name}` and `portfolio_set` with `action: "patch"` (`upsert` holdings matched by symbol, `remove` symbols, `currency`; one transaction); `PATCH /api/lab/strategies/{id}` and `strategy_save` with `id` + `spec_patch` (objects merge, arrays replace, `null` removes a key; it cannot rename). Portfolios with repeated symbols are still replaced whole. See `docs/API.md`.
+- **Tests.** `node --test client/copilot-context.test.mjs` and `python -m pytest -q tests/test_partial_update.py tests/test_manifest.py`.
+
 ## Assistant tools (MCP)
 
 `mcp_server.py` is the shared Hoard Link stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 23 tools:

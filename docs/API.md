@@ -28,10 +28,10 @@ Base URL `http://127.0.0.1:5192`. Every body is JSON. Errors are `{"error", "cod
 | `POST /api/theses/{id}/committee` | `committee_run` |
 | `POST /api/rules/validate` | rule syntax check |
 | `GET /api/lab/example`, `POST /api/lab/validate` | `strategy_validate` |
-| `GET/POST /api/lab/strategies`, `GET/DELETE /api/lab/strategies/{id}` | `strategies_list`, `strategy_save` |
+| `GET/POST /api/lab/strategies`, `GET/PATCH/DELETE /api/lab/strategies/{id}` | `strategies_list`, `strategy_save` |
 | `POST /api/lab/backtests`, `POST /api/lab/backtests/{run_id}/validate` | `backtest_run`, `backtest_validate` |
 | `GET /api/lab/experiments`, `GET /api/lab/experiments/{run_id}` | `experiments_list` |
-| `GET /api/portfolios`, `GET/PUT/DELETE /api/portfolios/{name}`, `POST /api/portfolios/{name}/analyze` | `portfolio_analyze`, `portfolio_set` |
+| `GET /api/portfolios`, `GET/PUT/PATCH/DELETE /api/portfolios/{name}`, `POST /api/portfolios/{name}/analyze` | `portfolio_analyze`, `portfolio_set` |
 | `POST /api/reports` | `report_export` |
 | `GET/PUT /api/settings` | language, offline, clear_cache, backend, keys (write-only: `{provider: key}`, empty removes; responses carry `keys.<id> = {configured, last4, source}`, never the value) |
 
@@ -231,8 +231,9 @@ Save a validated strategy by name, or delete one (action=delete, confirm=true). 
 | `action` | string |  |
 | `confirm` | boolean |  |
 | `spec` | object |  |
-| `id` | string | For action=delete: strategy id or name. |
+| `id` | string | Strategy id or name: for action=delete, and for spec_patch. |
 | `note` | string |  |
+| `spec_patch` | object | Atomically merges into the saved strategy named by id instead of replacing it: objects merge, arrays replace, null removes a key. It cannot rename the strategy. |
 
 ### `strategies_list`
 
@@ -299,13 +300,15 @@ Set a portfolio's holdings (list or CSV) or delete it (action=delete, confirm=tr
 | Argument | Type | Notes |
 |---|---|---|
 | `name` | string |  |
-| `action` | string |  |
+| `action` | string | set (default), delete or patch. patch atomically merges upsert/remove/currency into the existing portfolio, leaving other holdings as they are. |
 | `confirm` | boolean |  |
 | `holdings` | array | [{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}] |
 | `csv_text` | string | CSV with header: symbol,quantity[,snapshot_id,currency,cost_basis,label] |
 | `path` | string |  |
 | `currency` | string | Base currency of the portfolio (default EUR). |
 | `replace` | boolean |  |
+| `upsert` | array | patch: holdings matched by symbol; only the given fields change (null drops one); unknown symbols are added. |
+| `remove` | array | patch: symbols to remove. |
 
 ### `portfolio_analyze`
 

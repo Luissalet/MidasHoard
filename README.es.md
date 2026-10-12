@@ -42,6 +42,16 @@ El cliente está compilado y versionado en `midas_hoard/static`; para recompilar
 
 La configuración va por variables de entorno: `MIDAS_DATA_DIR` (por defecto `./data`), `MIDAS_PORT` (5192), `PORT_STRICT`, `MIDAS_ALLOWED_HOSTS`, `MIDAS_HTTP_TIMEOUT_S`, `MIDAS_CACHE_TTL_S`, `MIDAS_OFFLINE`. Los datos viven en `data/midas.db` (SQLite, WAL) y en `data/snapshots`, `data/runs` y `data/reports`; los archivos se escriben de forma atómica. El lanzador, el guardián de peticiones, el formato de errores, el `mcp-token` estable, la capa SQLite, el catálogo del agente (límite de 20 KB), el cliente HTTP de las fuentes de datos y el puente MCP son las librerías comunes de Hoard Link (`midas_hoard/hoard_link/`); un segundo `python -m midas_hoard` en el mismo puerto termina en lugar de arrancar otra copia.
 
+## Asistente de Faustus
+
+Con el lanzador compartido de Hoard Link instalado, la app muestra el panel de Faustus de la familia (un botón flotante). La conversación, el modelo y las herramientas viven en Faustus; esta app solo le dice al panel qué hay abierto.
+
+- **Contexto por vista.** El panel recibe los objetos abiertos en la vista, con ids reales leídos por la propia API de la app: `thesis` (título, estado, fecha de referencia, referencia), `portfolio` (nombre, moneda, número de posiciones), `experiment` (id de ejecución, estrategia o familia), `strategy` y `snapshot` (símbolo, proveedor; las instantáneas seleccionadas en Mercado). La vista indica además la página y la pestaña. Las vistas de creación (nueva tesis, cartera o estrategia) indican `new` y no dan objeto. No se envían posiciones, texto de evidencias ni claves.
+- **Campos sin guardar.** El panel los pide con el evento de ventana `midas:context-request`. Los formularios `thesis-form`, `evidence-form`, `portfolio-form`, `strategy-form` (texto de la especificación cortado a 20.000 caracteres si no se puede interpretar) y `snapshot-fetch-form` responden con lo escrito y `dirty`.
+- **Refresco.** Cuando el asistente termina un turno, la vista abierta se recarga en el sitio (`hoard:copilot-turn-end` / `window.hoardCopilot.onTurnEnd`) sin remontarse ni reiniciar formularios.
+- **Guardado.** Los formularios envían solo lo que ha cambiado. Novedad: `PATCH /api/portfolios/{name}` y `portfolio_set` con `action: "patch"` (`upsert` de posiciones por símbolo, `remove` de símbolos, `currency`; en una sola transacción); `PATCH /api/lab/strategies/{id}` y `strategy_save` con `id` + `spec_patch` (los objetos se fusionan, las listas se reemplazan, `null` quita una clave; no puede renombrar). Las carteras con símbolos repetidos se siguen reemplazando enteras. Véase `docs/API.md`.
+- **Pruebas.** `node --test client/copilot-context.test.mjs` y `python -m pytest -q tests/test_partial_update.py tests/test_manifest.py`.
+
 ## Herramientas para asistentes (MCP)
 
 `mcp_server.py` es el puente stdio compartido de Hoard Link. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 23 herramientas:
