@@ -38,28 +38,53 @@ export function holdingFromRow(row) {
   return out;
 }
 
+/** A lot as it was, to find it again on the server: every identifying field, absent ones as null. */
+const lotMatch = (h) => ({ quantity: h.quantity, cost_basis: h.cost_basis ?? null, snapshot_id: h.snapshot_id ?? null, currency: h.currency ?? null });
+
 /**
- * What the user changed in the holdings table, as `{upsert, remove}` for the PATCH endpoint: new rows go whole, edited rows
- * only with their changed fields (a cleared field is null), removed rows by symbol. Holdings are matched by symbol, so
- * repeated symbols (several lots) cannot be diffed: null means "replace the whole portfolio".
+ * What the user changed in the holdings table, as `{upsert, remove}` for the PATCH endpoint. Rows are paired with their
+ * baseline row by identity (`_k` when the editor sets it, else the n-th occurrence of the symbol), so several lots of one
+ * symbol diff like any others: edited rows send only their changed fields (a cleared field is null), added rows go whole,
+ * removed rows go as a symbol. A symbol held in more than one lot is addressed by `match` (the lot's previous values), an
+ * added extra lot carries `new_lot: true`; the server answers a conflict when that lot changed meanwhile. Never null.
  */
 export function holdingsPatch(baseRows, draftRows) {
-  const base = (baseRows || []).filter(usable).map(holdingFromRow);
-  const draft = (draftRows || []).filter(usable).map(holdingFromRow);
-  const repeated = (list) => new Set(list.map((h) => h.symbol)).size !== list.length;
-  if (repeated(base) || repeated(draft)) return null;
-  const before = new Map(base.map((h) => [h.symbol, h]));
-  const after = new Set(draft.map((h) => h.symbol));
-  const remove = base.filter((h) => !after.has(h.symbol)).map((h) => h.symbol);
+  const keyed = (rows) => {
+    const seen = new Map();
+    return (rows || []).filter(usable).map((row) => {
+      const h = holdingFromRow(row);
+      const nth = seen.get(h.symbol) || 0;
+      seen.set(h.symbol, nth + 1);
+      return { key: row._k != null ? `k:${row._k}` : `s:${h.symbol}#${nth}`, h };
+    });
+  };
+  const base = keyed(baseRows);
+  const draft = keyed(draftRows);
+  const count = (list, symbol) => list.filter((e) => e.h.symbol === symbol).length;
+  const draftByKey = new Map(draft.map((e) => [e.key, e.h]));
+  const baseByKey = new Map(base.map((e) => [e.key, e.h]));
+  const remove = [];
   const upsert = [];
-  for (const h of draft) {
-    const prev = before.get(h.symbol);
-    if (!prev) { upsert.push(h); continue; }
+  const lotRef = (h) => ({ symbol: h.symbol, match: lotMatch(h) });
+  for (const { key, h } of base) {
+    const now = draftByKey.get(key);
+    if (now && now.symbol === h.symbol) continue;
+    if (count(base, h.symbol) === 1 && count(draft, h.symbol) === 0) remove.push(h.symbol);
+    else remove.push(lotRef(h));
+  }
+  for (const { key, h } of draft) {
+    const prev = baseByKey.get(key);
+    if (!prev || prev.symbol !== h.symbol) {
+      upsert.push(count(base, h.symbol) > 0 || count(draft, h.symbol) > 1 ? { ...h, new_lot: true } : h);
+      continue;
+    }
     const delta = {};
     for (const field of HOLDING_FIELDS) {
       if (h[field] !== prev[field]) delta[field] = h[field] === undefined ? null : h[field];
     }
-    if (Object.keys(delta).length) upsert.push({ symbol: h.symbol, ...delta });
+    if (!Object.keys(delta).length) continue;
+    const several = count(base, h.symbol) > 1 || count(draft, h.symbol) > 1;
+    upsert.push(several ? { symbol: h.symbol, ...delta, match: lotMatch(prev) } : { symbol: h.symbol, ...delta });
   }
   return { upsert, remove };
 }

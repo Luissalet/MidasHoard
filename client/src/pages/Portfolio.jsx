@@ -6,8 +6,10 @@ import { SERIES_COLORS, money, num, pct, signClass } from "../format.js";
 import { holdingFromRow, holdingsPatch } from "../copilot-context.js";
 import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
-const blank = () => ({ symbol: "", quantity: "", snapshot_id: "", currency: "", cost_basis: "" });
-const rowsFrom = (initial) => (initial?.holdings?.length ? initial.holdings.map((h) => ({ ...blank(), ...h, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [blank()]);
+// `_k` is the row's identity in the form (not sent anywhere): loaded rows are l0, l1... so the baseline and the form agree; added rows get n1, n2...
+let newRows = 0;
+const blank = () => ({ _k: `n${++newRows}`, symbol: "", quantity: "", snapshot_id: "", currency: "", cost_basis: "" });
+const rowsFrom = (initial) => (initial?.holdings?.length ? initial.holdings.map((h, i) => ({ ...blank(), ...h, _k: `l${i}`, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" })) : [{ ...blank(), _k: "l0" }]);
 const filled = (r) => r.symbol && r.quantity !== "";
 
 function Editor({ snapshots, initial, onSaved }) {
@@ -88,7 +90,11 @@ function Editor({ snapshots, initial, onSaved }) {
       setError(null);
       setCsv("");
       onSaved(name);
-    } catch (err) { setError(err); }
+    } catch (err) {
+      setError(err);
+      // a lot was changed by someone else meanwhile: nothing was saved; reload the portfolio so the form shows what is stored now
+      if (err?.code === "conflict") { forceReset.current = true; onSaved(name); }
+    }
   };
   return (
     <form onSubmit={save} className="panel space-y-2">
@@ -98,7 +104,7 @@ function Editor({ snapshots, initial, onSaved }) {
         <table>
           <thead><tr><th>{t("symbol")}</th><th>{t("quantity")}</th><th>{t("snapshot")}</th><th>{t("currency")}</th><th>{t("cost_basis")}</th><th /></tr></thead>
           <tbody>{rows.map((r, i) => (
-            <tr key={i}>
+            <tr key={r._k}>
               <td><input className="field" style={{ minWidth: 90 }} value={r.symbol} onChange={(e) => setRow(i, "symbol", e.target.value)} aria-label={t("symbol")} /></td>
               <td><input className="field" style={{ minWidth: 70 }} type="number" step="any" value={r.quantity} onChange={(e) => setRow(i, "quantity", e.target.value)} aria-label={t("quantity")} /></td>
               <td><select className="field" style={{ minWidth: 150 }} value={r.snapshot_id} onChange={(e) => setRow(i, "snapshot_id", e.target.value)} aria-label={t("snapshot")}><option value="">{t("latest_snapshot")}</option>{snapshots.map((s) => <option key={s.id} value={s.id}>{s.symbol} ({s.actual_end})</option>)}</select></td>

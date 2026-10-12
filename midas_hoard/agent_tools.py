@@ -205,8 +205,8 @@ class PortfolioSetArgs(BaseModel):
     name: str = Field("default", min_length=1, max_length=60)
     action: Literal["set", "delete", "patch"] = Field("set", description="patch atomically merges upsert/remove/currency into the existing portfolio, leaving other holdings as they are.")
     confirm: bool = False
-    upsert: Optional[list[dict[str, Any]]] = Field(None, description="patch: holdings matched by symbol; only the given fields change (null drops one); unknown symbols are added.")
-    remove: Optional[list[str]] = Field(None, description="patch: symbols to remove.")
+    upsert: Optional[list[dict[str, Any]]] = Field(None, description="patch: holdings matched by symbol; only the given fields change (null drops one); unknown symbols are added. For a symbol held in several lots add match={quantity, cost_basis, snapshot_id, currency} with the lot's previous values (the first lot equal to all of them is changed; none equal -> conflict, nothing changes); new_lot=true appends another lot of an existing symbol.")
+    remove: Optional[list[Any]] = Field(None, description="patch: symbols to remove (all their lots), or {symbol, match} to remove one lot identified by its previous values (none equal -> conflict).")
     holdings: Optional[list[dict[str, Any]]] = Field(None, description='[{"symbol": "AAPL", "quantity": 10, "currency": "USD", "cost_basis": 150, "snapshot_id": "snp_..."}]')
     csv_text: Optional[str] = Field(None, max_length=1_000_000, description="CSV with header: symbol,quantity[,snapshot_id,currency,cost_basis,label]")
     path: Optional[str] = Field(None, max_length=1000)

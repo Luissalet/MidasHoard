@@ -34,9 +34,36 @@ test("holdingsPatch is empty without edits and ignores blank rows", () => {
   assert.deepEqual(holdingFromRow(row(" AAA ", "1,5".replace(",", "."), { cost_basis: "0" })), { symbol: "AAA", quantity: 1.5, cost_basis: 0 });
 });
 
-test("holdingsPatch refuses to diff repeated symbols (several lots)", () => {
-  assert.equal(holdingsPatch([row("AAA", 1), row("AAA", 2)], [row("AAA", 1)]), null);
-  assert.equal(holdingsPatch([row("AAA", 1)], [row("AAA", 1), row("AAA", 3)]), null);
+const lot = (key, symbol, quantity, cost) => row(symbol, quantity, { _k: key, cost_basis: cost == null ? "" : String(cost) });
+const lots = () => [lot("l0", "AAA", 10, 100), lot("l1", "AAA", 20, 200), lot("l2", "BBB", 5)];
+
+test("holdingsPatch with several lots sends only the edited lot, addressed by its previous values", () => {
+  const draft = lots();
+  draft[0] = lot("l0", "AAA", 11, 100);
+  assert.deepEqual(holdingsPatch(lots(), draft), {
+    upsert: [{ symbol: "AAA", quantity: 11, match: { quantity: 10, cost_basis: 100, snapshot_id: null, currency: null } }],
+    remove: [],
+  });
+  assert.deepEqual(holdingsPatch(lots(), lots()), { upsert: [], remove: [] });
+});
+
+test("holdingsPatch with several lots keeps the other symbols plain and follows rows when one is removed", () => {
+  const draft = [lot("l1", "AAA", 20, 200), lot("l2", "BBB", 6)];
+  assert.deepEqual(holdingsPatch(lots(), draft), {
+    upsert: [{ symbol: "BBB", quantity: 6 }],
+    remove: [{ symbol: "AAA", match: { quantity: 10, cost_basis: 100, snapshot_id: null, currency: null } }],
+  });
+});
+
+test("holdingsPatch appends a lot of an existing symbol with new_lot and never falls back to a full replacement", () => {
+  const draft = [...lots(), lot("n1", "AAA", 3), lot("n2", "NEW", 1)];
+  assert.deepEqual(holdingsPatch(lots(), draft), {
+    upsert: [{ symbol: "AAA", quantity: 3, new_lot: true }, { symbol: "NEW", quantity: 1 }],
+    remove: [],
+  });
+  const keyless = holdingsPatch([row("AAA", 1), row("AAA", 2)], [row("AAA", 1), row("AAA", 5)]);
+  assert.ok(keyless);
+  assert.deepEqual(keyless.upsert, [{ symbol: "AAA", quantity: 5, match: { quantity: 2, cost_basis: null, snapshot_id: null, currency: null } }]);
 });
 
 test("parseRoute reads page and param", () => {

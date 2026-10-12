@@ -104,30 +104,84 @@ class Portfolios:
                         (name, ccy, json.dumps(clean), self.clock()))
         return {"name": name, "currency": ccy, "holdings": clean, "count": len(clean), "replaced": bool(existing and replace)}
 
+    @staticmethod
+    def _lot_matches(row: dict[str, Any], match: dict[str, Any]) -> bool:
+        def norm(v: Any) -> Any:
+            return None if v is None or v == "" else v
+        return all(norm(row.get(k)) == norm(v) for k, v in match.items())
+
     def patch(self, name: str, *, currency: Optional[str] = None, upsert: Optional[list[dict[str, Any]]] = None,
-              remove: Optional[list[str]] = None) -> dict[str, Any]:
-        """Atomic partial update: remove holdings by symbol, then merge the provided fields of each upserted holding
-        (a ``null`` or empty field drops it; an unknown symbol is appended). Other holdings and fields are untouched."""
+              remove: Optional[list[Any]] = None) -> dict[str, Any]:
+        """Atomic partial update: remove holdings, then merge the provided fields of each upserted holding
+        (a ``null`` or empty field drops it; an unknown symbol is appended). Other holdings and fields are untouched.
+
+        Several lots of one symbol are addressed with ``match``: the lot's previous values (any of quantity, cost_basis,
+        snapshot_id, currency). The target is the first lot of that symbol equal to every key of ``match``; when none is,
+        the call fails with a ``conflict`` and changes nothing. ``new_lot: true`` appends a lot even if the symbol exists.
+        A remove entry is a symbol (all its lots) or ``{symbol, match}`` (one lot). Lots are resolved against the portfolio
+        as it was read, so one entry's change cannot redirect another."""
         with self.db.transaction():
             current = self.get(name)
             rows = [dict(h) for h in current["holdings"]]
-            for sym in remove or []:
-                key = str(sym).strip()
-                rows = [r for r in rows if r.get("symbol") != key]
+            original = list(rows)
+            claimed: set[int] = set()
+
+            def find_lot(sym: str, match: dict[str, Any]) -> dict[str, Any]:
+                for r in original:
+                    if id(r) not in claimed and r.get("symbol") == sym and self._lot_matches(r, match):
+                        claimed.add(id(r))
+                        return r
+                raise MidasError("conflict", f"The '{sym}' lot in '{name}' changed since it was loaded.", "Reload the portfolio and redo the change.")
+
+            def as_match(value: Any, sym: str) -> Optional[dict[str, Any]]:
+                if value is None:
+                    return None
+                if not isinstance(value, dict):
+                    raise MidasError("invalid_request", f"match for '{sym}' must be an object.", "Use {quantity, cost_basis, snapshot_id, currency} as they were.")
+                return value
+
+            def merge(target: dict[str, Any], fields: dict[str, Any]) -> None:
+                for k, v in fields.items():
+                    if v is None or v == "":
+                        target.pop(k, None)
+                    else:
+                        target[k] = v
+
+            drop: list[dict[str, Any]] = []
+            drop_symbols: set[str] = set()
+            for entry in remove or []:
+                if isinstance(entry, dict):
+                    sym = str(entry.get("symbol", "")).strip()
+                    if not sym:
+                        raise MidasError("invalid_request", "Every removed holding needs a symbol.", "Pass a symbol or {symbol, match}.")
+                    match = as_match(entry.get("match"), sym)
+                    if match is None:
+                        drop_symbols.add(sym)
+                    else:
+                        drop.append(find_lot(sym, match))
+                else:
+                    drop_symbols.add(str(entry).strip())
+            targets: list[tuple[dict[str, Any], dict[str, Any]]] = []
             for item in upsert or []:
                 sym = str(item.get("symbol", "")).strip()
                 if not sym:
                     raise MidasError("invalid_request", "Every upserted holding needs a symbol.", "Holdings are matched by symbol.")
-                matches = [r for r in rows if r.get("symbol") == sym]
+                match = as_match(item.get("match"), sym)
+                if match is not None:
+                    targets.append((find_lot(sym, match), {k: v for k, v in item.items() if k not in ("symbol", "match", "new_lot")}))
+            rows = [r for r in rows if r.get("symbol") not in drop_symbols and not any(r is d for d in drop)]
+            for lot, fields in targets:
+                merge(lot, fields)
+            for item in upsert or []:
+                if item.get("match") is not None:
+                    continue
+                sym = str(item.get("symbol", "")).strip()
+                fields = {k: v for k, v in item.items() if k not in ("symbol", "match", "new_lot")}
+                matches = [] if item.get("new_lot") else [r for r in rows if r.get("symbol") == sym]
                 if len(matches) > 1:
-                    raise MidasError("invalid_request", f"'{sym}' appears in several lots of '{name}'.", "Replace the whole portfolio with portfolio_set.")
-                fields = {k: v for k, v in item.items() if k != "symbol"}
+                    raise MidasError("invalid_request", f"'{sym}' appears in several lots of '{name}'.", "Address one lot with match, or replace the whole portfolio with portfolio_set.")
                 if matches:
-                    for k, v in fields.items():
-                        if v is None or v == "":
-                            matches[0].pop(k, None)
-                        else:
-                            matches[0][k] = v
+                    merge(matches[0], fields)
                 else:
                     rows.append({"symbol": sym, **{k: v for k, v in fields.items() if v is not None and v != ""}})
             clean = self._clean(rows)
