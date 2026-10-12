@@ -3,7 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { BarList, Chip, ConfirmButton, Empty, ErrorBox, Field, Kpi, LineChart, Provenance } from "../components/ui.jsx";
 import { SERIES_COLORS, money, num, pct, signClass } from "../format.js";
-import { holdingFromRow, holdingsPatch } from "../copilot-context.js";
+import { holdingFromRow, holdingsPatch, rebaseLots } from "../copilot-context.js";
 import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
 
 // `_k` is the row's identity in the form (not sent anywhere): loaded rows are l0, l1... so the baseline and the form agree; added rows get n1, n2...
@@ -75,15 +75,43 @@ function Editor({ snapshots, initial, onSaved }) {
       const body = csv.trim()
         ? { csv_text: csv, currency }
         : { currency, holdings: rows.filter(filled).map((r) => ({ symbol: r.symbol, quantity: Number(r.quantity), snapshot_id: r.snapshot_id || undefined, currency: r.currency || undefined, cost_basis: r.cost_basis === "" ? undefined : Number(r.cost_basis) })) };
-      const b = base.current;
-      const patch = initial && name === initial.name && !csv.trim() ? holdingsPatch(b.rows, rows) : null;
-      if (patch) {
-        // an existing portfolio: send only what the user changed, so an edit made meanwhile by the assistant is not overwritten
+      const patchable = initial && name === initial.name && !csv.trim();
+      // an existing portfolio: send only what the user changed, so an edit made meanwhile by the assistant is not overwritten
+      const send = async (b, rowsNow, currencyNow) => {
+        const patch = holdingsPatch(b.rows, rowsNow);
         const delta = {};
-        if (currency !== b.currency) delta.currency = currency;
+        if (currencyNow !== b.currency) delta.currency = currencyNow;
         if (patch.upsert.length) delta.upsert = patch.upsert;
         if (patch.remove.length) delta.remove = patch.remove;
         if (Object.keys(delta).length) await api.portfolioPatch(name, delta);
+      };
+      if (patchable) {
+        try {
+          await send(base.current, rows, currency);
+        } catch (err) {
+          if (err?.code !== "conflict") throw err;
+          // A lot was changed by someone else meanwhile and nothing was saved. The draft is never discarded: re-base it onto the
+          // lots stored now (the user's changed fields on top of the current values) and retry once; if that cannot be done
+          // cleanly, keep the draft and the rebased baseline so the next Save can succeed.
+          const fresh = await api.portfolio(name);
+          const re = rebaseLots(base.current.rows, rows, fresh?.holdings);
+          const keepCurrency = currency !== base.current.currency;
+          const freshCurrency = fresh?.currency || base.current.currency;
+          const nextBase = { ...base.current, currency: freshCurrency, rows: re.base };
+          const nextCurrency = keepCurrency ? currency : freshCurrency;
+          base.current = nextBase;
+          setRows(re.rows);
+          setCurrency(nextCurrency);
+          const kept = (why) => setError(Object.assign(new Error(`${why} The portfolio changed meanwhile; your edits are kept - review and save again.`), { code: "conflict" }));
+          if (re.ambiguous.length) { kept(`Lots of ${re.ambiguous.join(", ")} were added or removed meanwhile.`); return; }
+          try {
+            await send(nextBase, re.rows, nextCurrency);
+          } catch (again) {
+            if (again?.code !== "conflict") throw again;
+            kept("The retry conflicted again.");
+            return;
+          }
+        }
       } else await api.portfolioSet(name, body);
       forceReset.current = true;
       notify(`${t("saved")}: ${name}`);
@@ -91,9 +119,8 @@ function Editor({ snapshots, initial, onSaved }) {
       setCsv("");
       onSaved(name);
     } catch (err) {
+      // nothing was saved: the form keeps the draft as it is
       setError(err);
-      // a lot was changed by someone else meanwhile: nothing was saved; reload the portfolio so the form shows what is stored now
-      if (err?.code === "conflict") { forceReset.current = true; onSaved(name); }
     }
   };
   return (

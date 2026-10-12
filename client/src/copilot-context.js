@@ -89,6 +89,75 @@ export function holdingsPatch(baseRows, draftRows) {
   return { upsert, remove };
 }
 
+const ROW_FIELDS = ["symbol", ...HOLDING_FIELDS];
+const rowSymbol = (row) => String(row.symbol || "").trim();
+const sameFields = (a, b, fields = ROW_FIELDS) => fields.every((f) => String(a[f] ?? "") === String(b[f] ?? ""));
+let rebases = 0;
+
+/** A stored holding as an editor row (strings), keyed `key`. */
+export function rowFromHolding(h, key) {
+  return { symbol: "", quantity: "", snapshot_id: "", currency: "", cost_basis: "", ...h, _k: key, quantity: String(h.quantity), cost_basis: h.cost_basis ?? "" };
+}
+
+/**
+ * Re-bases an unsaved holdings form onto the lots stored now (after a save conflict), without losing the draft.
+ * Every baseline row is paired with the current lot of the same symbol and the same occurrence index; a symbol whose number
+ * of lots changed meanwhile cannot be paired and is "ambiguous" when the user touched it (otherwise the current lots are
+ * simply adopted). For paired rows the new baseline is the current lot and the form keeps the user's changed fields on top
+ * of the current values of the others (the assistant's quantity edit plus the user's cost edit). Ambiguous symbols keep
+ * their draft rows and their old baseline rows untouched. Returns `{ base, rows, ambiguous }`.
+ */
+export function rebaseLots(baseRows, draftRows, serverHoldings) {
+  const gen = ++rebases;
+  const server = (serverHoldings || []).map((h, i) => rowFromHolding(h, `s${gen}_${i}`));
+  const base = (baseRows || []).filter((r) => rowSymbol(r));
+  const draft = draftRows || [];
+  const bySymbol = (rows) => {
+    const m = new Map();
+    for (const r of rows) { const s = rowSymbol(r); if (!m.has(s)) m.set(s, []); m.get(s).push(r); }
+    return m;
+  };
+  const baseBy = bySymbol(base);
+  const serverBy = bySymbol(server);
+  const draftByKey = new Map(draft.map((r) => [r._k, r]));
+  const baseKeys = new Set(base.map((r) => r._k));
+  const unchangedBase = new Set(base.filter((b) => { const d = draftByKey.get(b._k); return d && sameFields(b, d); }).map((b) => b._k));
+  const touched = (symbol) => (baseBy.get(symbol) || []).some((b) => !unchangedBase.has(b._k))
+    || draft.some((d) => rowSymbol(d) === symbol && !unchangedBase.has(d._k));
+  const ambiguous = [];
+  const adopt = new Set();
+  const paired = new Map();
+  for (const [symbol, lots] of baseBy) {
+    const current = serverBy.get(symbol) || [];
+    if (current.length === lots.length) lots.forEach((b, i) => paired.set(b._k, current[i]));
+    else if (touched(symbol)) ambiguous.push(symbol);
+    else adopt.add(symbol);
+  }
+  const rows = [];
+  const emitted = new Set();
+  for (const d of draft) {
+    const p = paired.get(d._k);
+    if (p) {
+      const b = base.find((x) => x._k === d._k);
+      const mine = Object.fromEntries(ROW_FIELDS.filter((f) => String(b[f] ?? "") !== String(d[f] ?? "")).map((f) => [f, d[f]]));
+      rows.push({ ...p, ...mine, _k: p._k });
+    } else if (baseKeys.has(d._k) && adopt.has(rowSymbol(base.find((x) => x._k === d._k)))) {
+      const symbol = rowSymbol(base.find((x) => x._k === d._k));
+      if (!emitted.has(symbol)) { emitted.add(symbol); rows.push(...(serverBy.get(symbol) || [])); }
+    } else rows.push(d);
+  }
+  // current lots of symbols the form never knew about, and adopted symbols that had no draft row left to anchor them
+  for (const s of server) {
+    const symbol = rowSymbol(s);
+    if (!baseBy.has(symbol) && !ambiguous.includes(symbol) && !rows.some((r) => r._k === s._k)) rows.push(s);
+  }
+  for (const symbol of adopt) if (!emitted.has(symbol)) rows.push(...(serverBy.get(symbol) || []));
+  const newBase = [];
+  for (const s of server) if (!ambiguous.includes(rowSymbol(s))) newBase.push(s);
+  for (const b of base) if (ambiguous.includes(rowSymbol(b))) newBase.push(b);
+  return { base: newBase, rows, ambiguous };
+}
+
 /** The URL hash as { page, param }. */
 export function parseRoute(hash) {
   const [path] = String(hash || "").replace(/^#\/?/, "").split("?");

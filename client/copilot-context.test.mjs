@@ -179,3 +179,58 @@ test("form snapshots and view state are captured before the fetches, not after t
   const market = await run("#/market", { market: { selected: ["snp_a"], tab: "manual" } }, () => {});
   assert.deepEqual(market.view.editor, { asked: "snapshot:new", text: "before" });
 });
+
+// ------------------------------------------------------------------ save conflict: rebase the draft, never discard it
+
+const lotsOf = (...rows) => rows.map(([symbol, quantity, cost]) => ({ symbol, quantity, cost_basis: cost }));
+
+test("rebaseLots: the agent's quantity edit and the user's cost edit of the same lot compose", () => {
+  const { rowFromHolding, rebaseLots } = ctx;
+  const base = [rowFromHolding(lotsOf(["AAA", 11, 100])[0], "l0"), rowFromHolding(lotsOf(["AAA", 20, 200])[0], "l1"), rowFromHolding(lotsOf(["BBB", 7])[0], "l2")];
+  const draft = base.map((r, i) => (i === 0 ? { ...r, cost_basis: "110" } : { ...r }));
+  const out = rebaseLots(base, draft, lotsOf(["AAA", 12, 100], ["AAA", 20, 200], ["BBB", 7]));
+  assert.deepEqual(out.ambiguous, []);
+  assert.deepEqual(out.rows.map((r) => [r.symbol, r.quantity, String(r.cost_basis)]), [["AAA", "12", "110"], ["AAA", "20", "200"], ["BBB", "7", ""]]);
+  assert.deepEqual(out.base.map((r) => [r.symbol, r.quantity, String(r.cost_basis)]), [["AAA", "12", "100"], ["AAA", "20", "200"], ["BBB", "7", ""]]);
+  assert.deepEqual(holdingsPatch(out.base, out.rows), {
+    upsert: [{ symbol: "AAA", cost_basis: 110, match: { quantity: 12, cost_basis: 100, snapshot_id: null, currency: null } }],
+    remove: [],
+  });
+});
+
+test("rebaseLots: a symbol whose lot count changed and that the user edited is ambiguous and keeps the draft", () => {
+  const { rowFromHolding, rebaseLots } = ctx;
+  const base = [rowFromHolding(lotsOf(["AAA", 11, 100])[0], "l0"), rowFromHolding(lotsOf(["AAA", 20, 200])[0], "l1"), rowFromHolding(lotsOf(["BBB", 7])[0], "l2")];
+  const draft = [{ ...base[0], cost_basis: "110" }, { ...base[1] }, { ...base[2], quantity: "9" }];
+  const out = rebaseLots(base, draft, lotsOf(["AAA", 11, 100], ["AAA", 20, 200], ["AAA", 5, 50], ["BBB", 8]));
+  assert.deepEqual(out.ambiguous, ["AAA"]);
+  assert.equal(out.rows.find((r) => r._k === "l0").cost_basis, "110");
+  assert.equal(out.rows.filter((r) => r.symbol === "AAA").length, 2);
+  // BBB was unambiguous: rebased onto the current lot, the user's quantity kept
+  const bbb = out.rows.find((r) => r.symbol === "BBB");
+  assert.equal(bbb.quantity, "9");
+  assert.deepEqual(out.base.filter((r) => r.symbol === "BBB").map((r) => r.quantity), ["8"]);
+  assert.deepEqual(out.base.filter((r) => r.symbol === "AAA").map((r) => r._k), ["l0", "l1"]);
+});
+
+test("rebaseLots: untouched symbols adopt the current lots, new symbols appear, removed rows stay removed", () => {
+  const { rowFromHolding, rebaseLots } = ctx;
+  const base = [rowFromHolding(lotsOf(["AAA", 11, 100])[0], "l0"), rowFromHolding(lotsOf(["BBB", 7])[0], "l1"), rowFromHolding(lotsOf(["CCC", 1])[0], "l2")];
+  const draft = [{ ...base[0] }, { ...base[1], quantity: "8" }];
+  const out = rebaseLots(base, draft, lotsOf(["AAA", 11, 100], ["AAA", 3, 30], ["BBB", 7], ["CCC", 1], ["DDD", 4]));
+  assert.deepEqual(out.ambiguous, []);
+  assert.deepEqual(out.rows.map((r) => [r.symbol, r.quantity]), [["AAA", "11"], ["AAA", "3"], ["BBB", "8"], ["DDD", "4"]]);
+  const patch = holdingsPatch(out.base, out.rows);
+  assert.deepEqual(patch.remove, ["CCC"]);
+  assert.deepEqual(patch.upsert, [{ symbol: "BBB", quantity: 8 }]);
+});
+
+test("the save conflict path keeps the draft: it rebases and retries instead of forcing a reset", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const src = await readFile(new URL("./src/pages/Portfolio.jsx", import.meta.url), "utf8");
+  const save = src.slice(src.indexOf("const save = async"), src.indexOf("return (\n    <form onSubmit={save}"));
+  assert.ok(save.includes("rebaseLots("), "the conflict is rebased");
+  const failure = save.slice(save.indexOf("if (err?.code !== \"conflict\") throw err;"), save.indexOf("} else await api.portfolioSet"));
+  assert.ok(!failure.includes("forceReset") && !failure.includes("onSaved("), "the conflict path neither discards nor reloads the form");
+  assert.ok(save.includes("your edits are kept"));
+});
