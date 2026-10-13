@@ -1,0 +1,341 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-13T11:56:32.059230+00:00",
+  "title": "Design System: Midas Watchlists",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Midas gold",
+        "canonical": "#e0bd4b",
+        "tonalRamp": [
+          "oklch(15% 0.13609 91.85)",
+          "oklch(26.43% 0.13609 91.85)",
+          "oklch(37.86% 0.13609 91.85)",
+          "oklch(49.29% 0.13609 91.85)",
+          "oklch(60.71% 0.13609 91.85)",
+          "oklch(72.14% 0.13609 91.85)",
+          "oklch(83.57% 0.13609 91.85)",
+          "oklch(95% 0.13609 91.85)"
+        ]
+      },
+      "primary-hover": {
+        "role": "primary",
+        "displayName": "Gold hover",
+        "canonical": "#e6ca6e",
+        "tonalRamp": [
+          "oklch(15% 0.11645 92.84)",
+          "oklch(26.43% 0.11645 92.84)",
+          "oklch(37.86% 0.11645 92.84)",
+          "oklch(49.29% 0.11645 92.84)",
+          "oklch(60.71% 0.11645 92.84)",
+          "oklch(72.14% 0.11645 92.84)",
+          "oklch(83.57% 0.11645 92.84)",
+          "oklch(95% 0.11645 92.84)"
+        ]
+      },
+      "primary-ink": {
+        "role": "neutral",
+        "displayName": "Gold ink",
+        "canonical": "#1b1913",
+        "tonalRamp": [
+          "oklch(15% 0.01175 91.77)",
+          "oklch(26.43% 0.01175 91.77)",
+          "oklch(37.86% 0.01175 91.77)",
+          "oklch(49.29% 0.01175 91.77)",
+          "oklch(60.71% 0.01175 91.77)",
+          "oklch(72.14% 0.01175 91.77)",
+          "oklch(83.57% 0.01175 91.77)",
+          "oklch(95% 0.01175 91.77)"
+        ]
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Warm charcoal ground",
+        "canonical": "#1c1a14",
+        "tonalRamp": [
+          "oklch(15% 0.01170 91.77)",
+          "oklch(26.43% 0.01170 91.77)",
+          "oklch(37.86% 0.01170 91.77)",
+          "oklch(49.29% 0.01170 91.77)",
+          "oklch(60.71% 0.01170 91.77)",
+          "oklch(72.14% 0.01170 91.77)",
+          "oklch(83.57% 0.01170 91.77)",
+          "oklch(95% 0.01170 91.77)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Warm charcoal panel",
+        "canonical": "#24221b",
+        "tonalRamp": [
+          "oklch(15% 0.01306 93.92)",
+          "oklch(26.43% 0.01306 93.92)",
+          "oklch(37.86% 0.01306 93.92)",
+          "oklch(49.29% 0.01306 93.92)",
+          "oklch(60.71% 0.01306 93.92)",
+          "oklch(72.14% 0.01306 93.92)",
+          "oklch(83.57% 0.01306 93.92)",
+          "oklch(95% 0.01306 93.92)"
+        ]
+      },
+      "elevated": {
+        "role": "neutral",
+        "displayName": "Warm charcoal state",
+        "canonical": "#2f2d25",
+        "tonalRamp": [
+          "oklch(15% 0.01427 95.52)",
+          "oklch(26.43% 0.01427 95.52)",
+          "oklch(37.86% 0.01427 95.52)",
+          "oklch(49.29% 0.01427 95.52)",
+          "oklch(60.71% 0.01427 95.52)",
+          "oklch(72.14% 0.01427 95.52)",
+          "oklch(83.57% 0.01427 95.52)",
+          "oklch(95% 0.01427 95.52)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Subtle edge",
+        "canonical": "#433f35",
+        "tonalRamp": [
+          "oklch(15% 0.01744 88.80)",
+          "oklch(26.43% 0.01744 88.80)",
+          "oklch(37.86% 0.01744 88.80)",
+          "oklch(49.29% 0.01744 88.80)",
+          "oklch(60.71% 0.01744 88.80)",
+          "oklch(72.14% 0.01744 88.80)",
+          "oklch(83.57% 0.01744 88.80)",
+          "oklch(95% 0.01744 88.80)"
+        ]
+      },
+      "border-hover": {
+        "role": "neutral",
+        "displayName": "Active edge",
+        "canonical": "#6a6658",
+        "tonalRamp": [
+          "oklch(15% 0.02200 93.86)",
+          "oklch(26.43% 0.02200 93.86)",
+          "oklch(37.86% 0.02200 93.86)",
+          "oklch(49.29% 0.02200 93.86)",
+          "oklch(60.71% 0.02200 93.86)",
+          "oklch(72.14% 0.02200 93.86)",
+          "oklch(83.57% 0.02200 93.86)",
+          "oklch(95% 0.02200 93.86)"
+        ]
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Warm pale text",
+        "canonical": "#eceae1",
+        "tonalRamp": [
+          "oklch(15% 0.01219 96.43)",
+          "oklch(26.43% 0.01219 96.43)",
+          "oklch(37.86% 0.01219 96.43)",
+          "oklch(49.29% 0.01219 96.43)",
+          "oklch(60.71% 0.01219 96.43)",
+          "oklch(72.14% 0.01219 96.43)",
+          "oklch(83.57% 0.01219 96.43)",
+          "oklch(95% 0.01219 96.43)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Supporting text",
+        "canonical": "#bebbb4",
+        "tonalRamp": [
+          "oklch(15% 0.01031 87.48)",
+          "oklch(26.43% 0.01031 87.48)",
+          "oklch(37.86% 0.01031 87.48)",
+          "oklch(49.29% 0.01031 87.48)",
+          "oklch(60.71% 0.01031 87.48)",
+          "oklch(72.14% 0.01031 87.48)",
+          "oklch(83.57% 0.01031 87.48)",
+          "oklch(95% 0.01031 87.48)"
+        ]
+      },
+      "dim": {
+        "role": "neutral",
+        "displayName": "Dim metadata",
+        "canonical": "#a6a49b",
+        "tonalRamp": [
+          "oklch(15% 0.01300 96.49)",
+          "oklch(26.43% 0.01300 96.49)",
+          "oklch(37.86% 0.01300 96.49)",
+          "oklch(49.29% 0.01300 96.49)",
+          "oklch(60.71% 0.01300 96.49)",
+          "oklch(72.14% 0.01300 96.49)",
+          "oklch(83.57% 0.01300 96.49)",
+          "oklch(95% 0.01300 96.49)"
+        ]
+      },
+      "positive": {
+        "role": "semantic",
+        "displayName": "Positive observation",
+        "canonical": "#4a9e6d",
+        "tonalRamp": [
+          "oklch(15% 0.11107 155.72)",
+          "oklch(26.43% 0.11107 155.72)",
+          "oklch(37.86% 0.11107 155.72)",
+          "oklch(49.29% 0.11107 155.72)",
+          "oklch(60.71% 0.11107 155.72)",
+          "oklch(72.14% 0.11107 155.72)",
+          "oklch(83.57% 0.11107 155.72)",
+          "oklch(95% 0.11107 155.72)"
+        ]
+      },
+      "negative": {
+        "role": "semantic",
+        "displayName": "Negative observation",
+        "canonical": "#c4463a",
+        "tonalRamp": [
+          "oklch(15% 0.16337 28.69)",
+          "oklch(26.43% 0.16337 28.69)",
+          "oklch(37.86% 0.16337 28.69)",
+          "oklch(49.29% 0.16337 28.69)",
+          "oklch(60.71% 0.16337 28.69)",
+          "oklch(72.14% 0.16337 28.69)",
+          "oklch(83.57% 0.16337 28.69)",
+          "oklch(95% 0.16337 28.69)"
+        ]
+      },
+      "primary-soft": {
+        "role": "primary",
+        "displayName": "Gold source background",
+        "canonical": "rgba(224, 189, 75, 0.14)"
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Market heading",
+        "purpose": "Existing page heading only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "toast-ambient",
+        "value": "0 8px 28px rgba(0, 0, 0, 0.38)",
+        "purpose": "Existing transient toast; watchlist panels remain flat."
+      }
+    ],
+    "motion": [
+      {
+        "name": "control-state",
+        "value": "background 0.14s, border-color 0.14s",
+        "purpose": "Existing button state transitions; reduced-motion preference disables them."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "40rem"
+      },
+      {
+        "name": "sidebar",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "64rem"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Save selection",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The new-list action uses the shared gold accent.",
+      "html": "<button type=\"button\" class=\"ds-primary\">Guardar selección como nueva lista</button>",
+      "css": ".ds-primary{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 12px;border-radius:var(--hoard-radius,8px);border:1px solid var(--hoard-border,#433f35);background:transparent;color:var(--hoard-text,#eceae1);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .14s,border-color .14s;background:var(--hoard-accent,#e0bd4b);border-color:var(--hoard-accent,#e0bd4b);color:var(--hoard-accent-ink,#1b1913)}.ds-primary:hover{background:var(--hoard-accent-strong,#e6ca6e);border-color:var(--hoard-accent-strong,#e6ca6e)}.ds-primary:focus-visible{outline:2px solid var(--hoard-accent,#e0bd4b);outline-offset:2px;}.ds-primary:disabled{opacity:.45;cursor:not-allowed}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none}}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Rename and add preserve the incumbent transparent control.",
+      "html": "<button type=\"button\" class=\"ds-secondary\">Añadir selección a esta lista</button>",
+      "css": ".ds-secondary{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 12px;border-radius:var(--hoard-radius,8px);border:1px solid var(--hoard-border,#433f35);background:transparent;color:var(--hoard-text,#eceae1);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .14s,border-color .14s;}.ds-secondary:hover{background:var(--hoard-elevated,#2f2d25);border-color:var(--hoard-border-hover,#6a6658)}.ds-secondary:focus-visible{outline:2px solid var(--hoard-accent,#e0bd4b);outline-offset:2px;}.ds-secondary:disabled{opacity:.45;cursor:not-allowed}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none}}"
+    },
+    {
+      "name": "Row action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Compact row action changes membership without deleting the snapshot.",
+      "html": "<button type=\"button\" class=\"ds-row-action\">Quitar de la lista</button>",
+      "css": ".ds-row-action{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 12px;border-radius:var(--hoard-radius,8px);border:1px solid var(--hoard-border,#433f35);background:transparent;color:var(--hoard-text,#eceae1);font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:background .14s,border-color .14s;min-height:26px;padding:2px 9px;font-size:12px}.ds-row-action:hover{background:var(--hoard-elevated,#2f2d25);border-color:var(--hoard-border-hover,#6a6658)}.ds-row-action:focus-visible{outline:2px solid var(--hoard-accent,#e0bd4b);outline-offset:2px;}.ds-row-action:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Named list input",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A real enclosing label and native input capture the list name.",
+      "html": "<label class=\"ds-field-label\"><span>Nombre de la lista</span><input class=\"ds-field\" value=\"Seguimiento de pruebas\" maxlength=\"200\"></label>",
+      "css": ".ds-field-label{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);display:block;color:var(--hoard-text-muted,#bebbb4);font-size:11.5px;font-weight:600}.ds-field-label>span{display:block;margin-bottom:3px}.ds-field{width:100%;min-width:0;padding:5px 9px;border-radius:var(--hoard-radius,8px);border:1px solid var(--hoard-border,#433f35);background:var(--hoard-surface,#24221b);color:var(--hoard-text,#eceae1);font:inherit;font-size:12.5px}.ds-field:focus{border-color:var(--hoard-accent,#e0bd4b);outline:none}.ds-field:focus-visible{outline:2px solid var(--hoard-accent,#e0bd4b);outline-offset:2px;}"
+    },
+    {
+      "name": "Active Market navigation",
+      "kind": "nav",
+      "refersTo": "navigation-active",
+      "description": "Existing family navigation shows the active route with a tonal layer.",
+      "html": "<a class=\"ds-nav\" href=\"#/market\" aria-current=\"page\"><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 17l6-6 4 4 8-8M15 7h6v6\"></path></svg>Mercado</a>",
+      "css": ".ds-nav{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);display:flex;align-items:center;gap:9px;min-height:40px;padding:0 12px;border-radius:var(--hoard-radius,8px);color:var(--hoard-text-muted,#bebbb4);text-decoration:none;font-size:14px;font-weight:500}.ds-nav:hover,.ds-nav[aria-current=\"page\"]{background:var(--hoard-elevated,#2f2d25);color:var(--hoard-text,#eceae1)}.ds-nav[aria-current=\"page\"] svg{color:var(--hoard-accent,#e0bd4b)}.ds-nav:focus-visible{outline:2px solid var(--hoard-accent,#e0bd4b);outline-offset:2px;}"
+    },
+    {
+      "name": "Snapshot provenance",
+      "kind": "chip",
+      "refersTo": "provenance",
+      "description": "Visible provider, symbol, ending date and shortened hash; full values remain in the title.",
+      "html": "<span class=\"ds-source\" title=\"Instantánea: demo · fecha: 2024-12-31 · moneda: USD · sha256: ejemplo\">fake:fake.up · 2024-12-31 · 77094139e5…</span>",
+      "css": ".ds-source{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border-radius:var(--hoard-radius-sm,6px);background:var(--hoard-accent-soft,rgba(224,189,75,.14));color:var(--hoard-accent,#e0bd4b);font-size:11px;font-weight:600;white-space:nowrap}"
+    },
+    {
+      "name": "Watchlists panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Flat bordered container reuses the existing Midas panel.",
+      "html": "<section class=\"ds-panel\" aria-labelledby=\"ds-heading\"><h2 id=\"ds-heading\">Listas de seguimiento</h2><p>Selecciona una lista guardada para consultar sus series.</p></section>",
+      "css": ".ds-panel{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);background:var(--hoard-surface,#24221b);border:1px solid var(--hoard-border,#433f35);border-radius:var(--hoard-radius-lg,10px);padding:12px;color:var(--hoard-text,#eceae1);font-size:13px;line-height:1.5}.ds-panel h2{margin:0;font-size:14px;font-weight:650;letter-spacing:-.01em}.ds-panel p{margin:12px 0 0;font-size:12px;color:var(--hoard-text-muted,#bebbb4)}"
+    },
+    {
+      "name": "Observation result row",
+      "kind": "custom",
+      "refersTo": "panel",
+      "description": "Complete observation table scrolls within its container; sample values are fictional.",
+      "html": "<div class=\"ds-table-wrap\"><table class=\"ds-table\"><thead><tr><th>Serie</th><th>Último dato</th><th>Variación</th><th>Caída</th><th>Periodo</th><th>Fuente</th></tr></thead><tbody><tr><td>fake.up</td><td>671,35<br><small>USD</small></td><td class=\"ds-positive\">6,38 %</td><td>-1,22 %</td><td>2024-12-03<br>2024-12-31<br><small>21 · D</small></td><td>fake:fake.up · 77094139e5…</td></tr></tbody></table></div>",
+      "css": ".ds-table-wrap{overflow-x:auto}.ds-table{font-family:var(--hoard-font-sans,\"Source Sans 3\",sans-serif);width:100%;border-collapse:collapse;color:var(--hoard-text,#eceae1);font-size:13px;line-height:1.5;font-variant-numeric:tabular-nums}.ds-table th{text-align:left;font-size:11.5px;font-weight:600;padding:4px 8px;white-space:nowrap;color:var(--hoard-text-muted,#bebbb4);border-bottom:1px solid var(--hoard-border,#433f35)}.ds-table td{padding:4px 8px;vertical-align:top;border-bottom:1px solid #ffffff0d}.ds-table small{font-size:12px;color:var(--hoard-text-muted,#bebbb4)}.ds-table .ds-positive{color:var(--hoard-success,#4a9e6d)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Existing Market workspace",
+    "overview": "This is an extraction of the current implementation, not a new brand proposal. Watchlists extend the existing charcoal and gold Operate surface: saved sets, filters, actual observations and source information are arranged for repeated research work. The old Market search, comparison and series tools remain below the new panel.\n\nThe descriptive language here is inferred from the supplied implementation. There is no formal PRODUCT document or confirmed brand metaphor. Luis explicitly authorised autonomous decisions; the scoped extraction therefore does not invent one or replace the incumbent world. Tokens are normative for this documented scope; shared theme generation remains the runtime authority.",
+    "keyCharacteristics": [
+      "Warm charcoal surfaces with a single gold action accent.",
+      "Compact sans text, serif page heading and tabular numbers.",
+      "Named lists and original series data have separate lifecycles.",
+      "Complete source information remains available in every result row."
+    ],
+    "rules": [
+      {
+        "name": "The Source Rule",
+        "body": "Show the currency or unit, frequency, observation dates and source identity beside the observation; do not present rows as if they were converted into one common unit.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Do keep saved-list membership independent of the Market selection.",
+      "Do retain all result columns and source details inside the mobile table scroller.",
+      "Do preserve existing snapshot data when removing a list member.",
+      "Do describe saved records as persistent and active selection as explicit after reload.",
+      "Do preserve partial-refresh outcomes and concurrent member edits.",
+      "Do capture draft context before asynchronous lookups."
+    ],
+    "donts": [
+      "Don't imply the rows have a common currency, calendar frequency or converted unit.",
+      "Don't calculate percentages without the positive bases required by the source.",
+      "Don't treat an uncomputed metric as zero.",
+      "Don't replace this existing Operate world with a new visual identity.",
+      "Don't describe supplied screenshots or author receipts as tests rerun by this documenter."
+    ]
+  }
+}
