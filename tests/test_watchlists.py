@@ -61,6 +61,25 @@ def test_zero_base_and_nonfinite_values_never_produce_json_nan(svc):
     json.dumps(rows,allow_nan=False)
 
 
+@pytest.mark.parametrize('values', [[1e-308,1e308],[-1e308,1e308]])
+def test_finite_inputs_with_overflowing_derived_metrics_keep_all_api_rows(client,values):
+    extreme=snapshot(client.svc,'EXTREME',values)
+    ordinary=snapshot(client.svc,'ORDINARY',[10,11])
+    watch=save(client.svc,'Extremos',[extreme,ordinary])
+    response=client.post(f"/api/watchlists/{watch['id']}/view",json={})
+    assert response.status_code==200,response.text
+    rows=response.json()['items']
+    assert len(rows)==2
+    normal=next(r for r in rows if r['symbol']=='ORDINARY')
+    large=next(r for r in rows if r['symbol']=='EXTREME')
+    assert normal['change_pct']==pytest.approx(10)
+    assert large['status']=='ok' and large['last']==1e308 and large['unavailable_metrics']
+    assert large['snapshot']['sha256']==extreme['sha256']
+    for metric in large['unavailable_metrics']:
+        assert large[metric] is None
+    json.dumps(response.json(),allow_nan=False)
+
+
 def test_integrity_failure_stays_visible_and_does_not_hide_other_assets(svc):
     a=snapshot(svc,'A',[10,12]);b=snapshot(svc,'B',[20,18]);watch=save(svc,'Integridad',[a,b])
     (svc.store.dir/(a['id']+'.csv')).write_text('broken',encoding='utf-8')

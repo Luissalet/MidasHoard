@@ -99,7 +99,7 @@ export default function Watchlists({ selected, onOpen, onUpdated }) {
         {say('Guardar selección como nueva lista', 'Save selection as new watchlist')}</button>
       {id && <button type="button" className="btn" disabled={busy || !name.trim() || !nameDirty} onClick={() => save('rename')}>{say('Renombrar', 'Rename')}</button>}
       {id && <button type="button" className="btn" disabled={busy || !selected.length} onClick={() => changeEntries({ add_entries: selected.map((snapshot_id) => ({ snapshot_id })) })}>{say('Añadir selección a esta lista', 'Add selection to this watchlist')}</button>}
-      <span className="help">{say(`${selected.length} series seleccionadas en Mercado.`, `${selected.length} series selected in Market.`)}</span>
+      <span className="help">{say(`${selected.length} ${selected.length === 1 ? 'serie seleccionada' : 'series seleccionadas'} en Mercado.`, `${selected.length} series selected in Market.`)}</span>
     </div>
     {!lists.length && <p className="help">{say('Selecciona series en Mercado y guárdalas para recuperarlas aquí.', 'Select series in Market and save them to return to them here.')}</p>}
     <ErrorBox error={error} t={t} />
@@ -127,7 +127,8 @@ export default function Watchlists({ selected, onOpen, onUpdated }) {
         <td className={signClass(row.change_pct)}>{row.change_pct == null ? '—' : `${num(row.change_pct, 2, lang)} %`}</td>
         <td>{row.drawdown_pct == null ? '—' : `${num(row.drawdown_pct, 2, lang)} %`}</td>
         <td>{row.first_date || '—'}<br />{row.last_date || '—'}<div className="help">{row.observations ?? 0} · {row.snapshot?.frequency}</div></td>
-        <td>{row.snapshot && <Provenance snap={row.snapshot} t={t} />}{row.status !== 'ok' && <span className="help">{row.error || say('Sin datos hasta esa fecha.', 'No data as of that date.')}</span>}</td>
+        <td>{row.snapshot && <Provenance snap={row.snapshot} t={t} />}{row.status !== 'ok' && <span className="help">{row.error || say('Sin datos hasta esa fecha.', 'No data as of that date.')}</span>}
+          {row.unavailable_metrics?.length > 0 && <p className="help">{say('Alguna métrica excede el rango numérico; el dato original se conserva.', 'A derived metric exceeds the numeric range; the original value is preserved.')}</p>}</td>
       </tr>)}</tbody></table>{!view.items.length && <p className="help py-3">{say('No hay series que cumplan estos filtros.', 'No series match these filters.')}</p>}</div>}
       <div className="flex items-center gap-2"><button className="btn btn-sm" type="button" disabled={!previous.length} onClick={() => { setCursor(previous[previous.length-1]); setPrevious((old) => old.slice(0,-1)); }}>{say('Anterior', 'Previous')}</button>
         <button className="btn btn-sm" type="button" disabled={view?.next_cursor == null} onClick={() => { setPrevious((old) => [...old,cursor]); setCursor(view.next_cursor); }}>{say('Siguiente', 'Next')}</button></div>

@@ -108,6 +108,14 @@ class Watchlists:
                        intervals=len(values)-1, last=last, change=last-first,
                        change_pct=(last/first-1)*100 if first > 0 and len(values)>1 else None,
                        drawdown_pct=float((values/values.cummax()-1).min()*100) if (values>0).all() else None)
+            unavailable = []
+            for metric in ('change', 'change_pct', 'drawdown_pct'):
+                if row[metric] is not None and not math.isfinite(row[metric]):
+                    row[metric] = None
+                    unavailable.append(metric)
+            if unavailable:
+                row['unavailable_metrics'] = unavailable
+                row['metric_note'] = 'Derived metrics exceed the finite numeric range; source values remain available.'
         except MidasError as error:
             row.update(status='error', error=str(error), code=error.code)
         return row
