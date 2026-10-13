@@ -296,8 +296,17 @@ export async function buildContext({ api = realApi, hash, read = publishedView, 
       }
     } else if (route.page === "market") {
       const state = readState("market");
+      const watch = readState('watchlist');
       const ids = Array.isArray(state.selected) ? [...state.selected] : [];
       grab("snapshot:new");
+      grab('watchlist:editor');
+      const watchlistDraft = snap.get('watchlist:editor');
+      view.watchlist_editor = watchlistDraft === undefined ? undefined : structuredClone(watchlistDraft);
+      if (watch.id) {
+        const result = await lookup(() => api.watchlistView(watch.id, { limit: 1 }));
+        if (result?.watchlist) objects.push({ kind: 'watchlist', object_id: result.watchlist.id,
+          title: result.watchlist.name, entries: result.watchlist.entries_count });
+      }
       if (ids.length) {
         const list = await lookup(() => api.snapshots({ limit: 100 }));
         for (const s of (list && list.snapshots) || []) {

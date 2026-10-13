@@ -38,6 +38,10 @@ export const api = {
   snapshots: (params) => request("GET", "/api/snapshots", { params }),
   series: (body) => request("POST", "/api/market/series", { body }),
   compare: (body) => request("POST", "/api/market/compare", { body }),
+  watchlists: (params) => request('GET', '/api/watchlists', { params }),
+  watchlistSave: (body) => request('POST', '/api/watchlists', { body }),
+  watchlistView: (id, body) => request('POST', `/api/watchlists/${enc(id)}/view`, { body }),
+  watchlistRefresh: (id, body) => request('POST', `/api/watchlists/${enc(id)}/refresh`, { body }),
 
   theses: (params) => request("GET", "/api/theses", { params }),
   thesisCreate: (body) => request("POST", "/api/theses", { body }),

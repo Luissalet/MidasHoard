@@ -40,3 +40,23 @@ def series(request: Request, body: dict[str, Any]):
 @router.post("/market/compare")
 def compare(request: Request, body: dict[str, Any]):
     return tool(request, "market_compare", body)
+
+
+@router.get('/watchlists')
+def watchlists(request: Request, limit: int = 30, cursor: int = 0):
+    return tool(request, 'watchlists_list', {'limit': limit, 'cursor': cursor})
+
+
+@router.post('/watchlists')
+def watchlist_save(request: Request, body: dict[str, Any]):
+    return tool(request, 'watchlist_save', body)
+
+
+@router.post('/watchlists/{id}/view')
+def watchlist_view(request: Request, id: str, body: dict[str, Any]):
+    return tool(request, 'watchlist_view', {**body, 'id': id})
+
+
+@router.post('/watchlists/{id}/refresh')
+def watchlist_refresh(request: Request, id: str, body: dict[str, Any]):
+    return tool(request, 'watchlist_refresh', {**body, 'id': id})

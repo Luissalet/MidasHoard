@@ -4,6 +4,7 @@ import { useApp } from "../App.jsx";
 import { BarList, Empty, ErrorBox, Field, Kpi, LineChart, Legend, Provenance, Tabs } from "../components/ui.jsx";
 import { SERIES_COLORS, num, pct, signClass } from "../format.js";
 import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
+import Watchlists from '../components/Watchlists.jsx';
 
 const ymd = (d) => d.toISOString().slice(0, 10);
 
@@ -220,6 +221,10 @@ export default function Market() {
   return (
     <div className="space-y-4">
       <h1>{t("nav_market")}</h1>
+      <Watchlists selected={selected} onUpdated={loadSnaps} onOpen={(snapshot) => {
+        setSnapshots((old) => old.some((item) => item.id === snapshot.id) ? old : [...old, snapshot]);
+        setSelected([snapshot.id]);
+      }} />
       <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
         <div className="space-y-3">
           <Tabs tabs={[{ key: "search", label: t("search") }, { key: "manual", label: t("manual") }, { key: "csv", label: "CSV" }]} active={tab} onChange={setTab} />

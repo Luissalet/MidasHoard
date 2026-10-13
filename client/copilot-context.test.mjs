@@ -124,6 +124,19 @@ test("market view: only selected snapshots that exist", async () => {
   assert.equal(out.view.tab, "manual");
 });
 
+test('market watchlist context keeps its draft before asynchronous native lookup', async () => {
+  let draft = { kind: 'watchlist-form', dirty: true, fields: { name: 'Manual', filters: { lookback: 10 } } };
+  const api = { ...fakeApi, watchlistView: async () => {
+    draft.fields.name = 'Changed during lookup';
+    return { watchlist: { id: 'wls_test', name: 'Saved', entries_count: 4 } };
+  }};
+  const out = await buildContext({ api, hash: '#/market', read: reader({ market: { selected: [] }, watchlist: { id: 'wls_test' } }),
+    editor: (id) => id === 'watchlist:editor' ? draft : undefined });
+  assert.equal(out.active_objects[0].kind, 'watchlist');
+  assert.equal(out.active_objects[0].object_id, 'wls_test');
+  assert.equal(out.view.watchlist_editor.fields.name, 'Manual');
+});
+
 test("editorContext collects the answer of the open form and tolerates none", () => {
   assert.equal(editorContext("x"), undefined);
   const off = (() => { const h = (e) => { if (e.detail.objectId === "x") e.detail.provide({ dirty: true }); }; window.addEventListener("midas:context-request", h); return () => window.removeEventListener("midas:context-request", h); })();

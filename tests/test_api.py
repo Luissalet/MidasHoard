@@ -17,7 +17,7 @@ def test_status(client):
 
 def test_agent_tools_endpoint(client):
     body = client.get("/api/agent/tools").json()
-    assert body["instructions"] and len(body["tools"]) == 23
+    assert body["instructions"] and len(body["tools"]) == 27
 
 
 def test_agent_call_requires_token(client):

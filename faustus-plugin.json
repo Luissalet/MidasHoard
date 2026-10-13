@@ -21,7 +21,10 @@
     "committee-review",
     "number-ledger",
     "portfolio-analysis",
-    "report-export"
+    "report-export",
+    "saved-watchlists",
+    "snapshot-screening",
+    "partial-watchlist-refresh"
   ],
   "placeholders": [
     "MIDAS_DIR",

@@ -345,3 +345,12 @@ Export a thesis, run or portfolio as Markdown/JSON with provenance for every num
 ## Events
 
 `midas.snapshot.created`, `midas.thesis.created`, `midas.thesis.invalidated`, `midas.backtest.finished`, each with ids and short titles only.
+
+## Watchlists
+
+- `watchlists_list` / GET /api/watchlists: paginated named sets and entry counts.
+- `watchlist_save` / POST /api/watchlists: create or partial update; entries replaces, add_entries merges by provider/symbol, remove_entries removes only membership. Original snapshot bytes remain.
+- `watchlist_view` / POST /api/watchlists/{id}/view: lookback observation intervals, as_of, query, currency, minimum change percent, maximum drawdown magnitude, sort and cursor. Data/snapshot SHA accompanies each row.
+- `watchlist_refresh` / POST /api/watchlists/{id}/refresh: fetch new immutable snapshots from existing providers. CSV remains pinned; per-entry failures preserve the previous source; concurrent name/membership/source changes remain. Each successful result reports whether it was attached to the current list.
+
+See WATCHLISTS.md for semantics and limits. The native catalogue has27 tools.

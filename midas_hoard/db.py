@@ -143,6 +143,17 @@ MIGRATIONS: list[str] = [
       updated_ts REAL NOT NULL
     );
     """,
+    # 4: saved market watchlists; snapshots remain immutable
+    """
+    CREATE TABLE watchlists (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      entries TEXT NOT NULL DEFAULT '[]',
+      created_ts REAL NOT NULL,
+      updated_ts REAL NOT NULL
+    );
+    """,
 ]
 
 

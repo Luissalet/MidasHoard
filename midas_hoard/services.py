@@ -31,6 +31,7 @@ from .providers import HttpClient, Registry
 from .providers.base import FetchResult
 from .snapshots import Snapshot, SnapshotStore, provenance
 from .theses import Theses
+from .watchlists import Watchlists
 
 log = logging.getLogger("midas")
 DISCLAIMER = reports_mod.DISCLAIMER
@@ -55,6 +56,7 @@ class Services:
                                transport=http_transport, sleep=sleep_fn, clock=clock_fn)
         self.providers = Registry(self.http, keys=self._provider_key, coingecko={"clock": clock_fn, "sleep": sleep_fn})
         self.store = SnapshotStore(self.db, config.snapshots_dir, clock_fn)
+        self.watchlists = Watchlists(self.db, self.store, self.market_fetch, clock_fn)
         if link is not None:
             self.link_sync = link  # test double, already "sync-shaped"
             self._link = None

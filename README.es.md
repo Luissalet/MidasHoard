@@ -54,7 +54,7 @@ Con el lanzador compartido de Hoard Link instalado, la app muestra el panel de F
 
 ## Herramientas para asistentes (MCP)
 
-`mcp_server.py` es el puente stdio compartido de Hoard Link. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 23 herramientas:
+`mcp_server.py` es el puente stdio compartido de Hoard Link. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 27 herramientas:
 
 ### Datos de mercado
 
@@ -117,3 +117,9 @@ Referencia completa: [docs/API.md](docs/API.md).
 ## Licencia
 
 MIT (c) Luis María Salete Cuartero. Los datos siguen sujetos a las condiciones de cada proveedor.
+
+## Listas de seguimiento
+
+Mercado guarda conjuntos de instantáneas con nombre. Crea una lista desde las series seleccionadas, renómbrala, añade selecciones o quita entradas sin borrar archivos de datos. Cada serie se abre en el gráfico existente. Puedes filtrar por símbolo, moneda, variación y caída, con fechas, periodo y SHA de la fuente. El corte por fecha afecta a las observaciones; no reconstruye vintages históricos. Actualizar descarga nuevas instantáneas por activo, conserva las importaciones CSV y comunica fallos parciales sin perder cambios simultáneos.
+
+Cuatro herramientas nativas usan la misma API: `watchlists_list`, `watchlist_save`, `watchlist_view`, `watchlist_refresh`. El asistente recibe la identidad de la lista y los campos sin guardar. No requiere otro modelo ni aplicación externa. [API y comportamiento comprobado](docs/WATCHLISTS.md).

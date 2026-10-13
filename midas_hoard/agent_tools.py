@@ -88,6 +88,44 @@ class SnapshotsListArgs(BaseModel):
     cursor: Optional[int] = Field(None, ge=0)
 
 
+class WatchlistEntry(BaseModel):
+    snapshot_id: Optional[str] = None
+    provider: Optional[str] = None
+    symbol: Optional[str] = None
+
+
+class WatchlistSaveArgs(BaseModel):
+    id: Optional[str] = None
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    notes: Optional[str] = Field(None, max_length=4000)
+    entries: Optional[list[WatchlistEntry]] = None
+    add_entries: Optional[list[WatchlistEntry]] = None
+    remove_entries: Optional[list[WatchlistEntry]] = None
+
+
+class WatchlistsListArgs(BaseModel):
+    limit: int = Field(30, ge=1, le=100)
+    cursor: int = Field(0, ge=0)
+
+
+class WatchlistViewArgs(WatchlistsListArgs):
+    id: str
+    lookback: int = Field(20, ge=1, description="Number of observation intervals; dates/frequency are returned for each series.")
+    as_of: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    query: str = ''
+    currency: Optional[str] = None
+    min_change_pct: Optional[float] = Field(None, allow_inf_nan=False)
+    max_drawdown_pct: Optional[float] = Field(None, ge=0, allow_inf_nan=False, description="Maximum drawdown magnitude in percent over this window.")
+    sort_by: Literal['change_pct', 'drawdown_pct', 'symbol'] = 'change_pct'
+    descending: bool = True
+
+
+class WatchlistRefreshArgs(BaseModel):
+    id: str
+    start: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end: Optional[str] = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
 # ------------------------------------------------------------------ theses
 class ThesisCreateArgs(BaseModel):
     title: str = Field(..., min_length=3, max_length=200)
@@ -273,6 +311,33 @@ def run_snapshots_list(svc: Services, args: SnapshotsListArgs) -> dict:
     off = args.cursor or 0
     res["next_cursor"] = off + args.limit if off + args.limit < res["total"] else None
     return res
+
+
+def run_watchlists_list(svc: Services, args: WatchlistsListArgs) -> dict:
+    result = svc.watchlists.list(**args.model_dump())
+    while len(result['watchlists']) > 1 and len(json.dumps(result, ensure_ascii=False).encode('utf-8')) > MAX_RESULT_BYTES-512:
+        result['watchlists'].pop()
+    offset = args.cursor + len(result['watchlists'])
+    result['next_cursor'] = offset if offset < result['total'] else None
+    return result
+
+
+def run_watchlist_save(svc: Services, args: WatchlistSaveArgs) -> dict:
+    return svc.watchlists.summary(svc.watchlists.save(**args.model_dump(exclude_none=True)))
+
+
+def run_watchlist_view(svc: Services, args: WatchlistViewArgs) -> dict:
+    result = svc.watchlists.view(**args.model_dump())
+    # Keep the shared result budget without skipping rows when a page is large.
+    while len(result['items']) > 1 and len(json.dumps(result, ensure_ascii=False).encode('utf-8')) > MAX_RESULT_BYTES-512:
+        result['items'].pop()
+    offset = args.cursor + len(result['items'])
+    result['next_cursor'] = offset if offset < result['total'] else None
+    return result
+
+
+def run_watchlist_refresh(svc: Services, args: WatchlistRefreshArgs) -> dict:
+    return svc.watchlists.refresh(**args.model_dump())
 
 
 def run_thesis_create(svc: Services, args: ThesisCreateArgs) -> dict:
@@ -516,6 +581,17 @@ TOOLS: list[Tool] = [
          "Sinónimos: informe, exportar a markdown, memoria, resumen de tesis, informe de backtest.",
          ReportArgs, _ann(False, False, True), run_report_export),
 ]
+
+TOOLS.extend([
+    Tool('watchlists_list', 'List saved market watchlists and their pinned snapshot entries. Listas de seguimiento.\nSinónimos: listas guardadas, conjuntos de activos, seguimiento.',
+         WatchlistsListArgs, _ann(True), run_watchlists_list),
+    Tool('watchlist_save', 'Create or partially update a saved watchlist. Guardar lista de seguimiento.\nUnspecified fields are preserved; entries explicitly replaces the set. Use snapshot_id or provider/symbol.\nSinónimos: guardar selección, renombrar lista, activos observados.',
+         WatchlistSaveArgs, _ann(False, False, True), run_watchlist_save),
+    Tool('watchlist_view', 'Explore and filter a saved watchlist with dated metrics. Filtrar lista de seguimiento.\nCloses, percentage change and drawdown over observation intervals; currency, sort and pagination. Each row has snapshot SHA, dates and units. No network or LLM.\nSinónimos: explorar activos, variación, caída, screener.',
+         WatchlistViewArgs, _ann(True), run_watchlist_view),
+    Tool('watchlist_refresh', 'Fetch new snapshots for watchlist entries. Actualizar lista de seguimiento.\nExisting providers, partial errors, CSV sources kept and concurrent list edits preserved.\nSinónimos: refrescar activos, actualizar cotizaciones, nuevos datos.',
+         WatchlistRefreshArgs, _ann(False, False, True, open_world=True), run_watchlist_refresh),
+])
 
 TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 

@@ -14,6 +14,7 @@ FINAL_TOOLS = {
     "midas_status", "market_providers", "market_search", "market_fetch", "market_series", "market_compare", "snapshots_list", "thesis_create",
     "thesis_get", "thesis_list", "thesis_update", "thesis_evidence_add", "thesis_check", "strategy_validate", "strategy_save", "strategies_list",
     "backtest_run", "backtest_validate", "experiments_list", "committee_run", "portfolio_set", "portfolio_analyze", "report_export",
+    "watchlists_list", "watchlist_save", "watchlist_view", "watchlist_refresh",
 }
 
 
@@ -32,7 +33,7 @@ def test_manifest_has_only_allowed_top_level_keys():
 
 
 def test_tool_names_are_the_contract():
-    assert {t.name for t in TOOLS} == FINAL_TOOLS and len(TOOLS) == 23
+    assert {t.name for t in TOOLS} == FINAL_TOOLS and len(TOOLS) == 27
 
 
 def test_readmes_and_api_doc_list_every_tool():

@@ -54,7 +54,7 @@ Once the shared Hoard Link launcher is installed, the app shows the family's Fau
 
 ## Assistant tools (MCP)
 
-`mcp_server.py` is the shared Hoard Link stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 23 tools:
+`mcp_server.py` is the shared Hoard Link stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 27 tools:
 
 ### Market data
 
@@ -117,3 +117,9 @@ Full reference: [docs/API.md](docs/API.md).
 ## Licence
 
 MIT (c) Luis María Salete Cuartero. Data remains subject to each provider's terms.
+
+## Saved watchlists / Listas de seguimiento
+
+Market now keeps named sets of pinned snapshots. Create a list from the selected series, rename it, add selections or remove individual entries without deleting snapshot files. Open each series in the existing chart. Filter by symbol/currency, percentage change and drawdown, with dated windows and source SHA. The date cutoff affects observations; it does not reconstruct provider vintages. Refresh fetches new snapshots per asset, keeps imported CSV data, reports partial failures and preserves concurrent edits.
+
+Four native tools use the same API: `watchlists_list`, `watchlist_save`, `watchlist_view`, `watchlist_refresh`. The assistant receives the saved list identity and unsaved watchlist editor fields. No additional model or external application is required. [API and verified behavior](docs/WATCHLISTS.md).
