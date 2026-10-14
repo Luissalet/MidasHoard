@@ -84,6 +84,19 @@ td.mono { white-space: nowrap; }
 .banner { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; font-size: 12.5px; }
 .banner-warn { background: var(--warn-bg); border-color: #e0a43a66; }
 .banner-danger { background: var(--danger-bg); border-color: #e5604b66; }
+.kind { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 0 6px; margin-right: 6px; border-radius: 4px; vertical-align: 1px; background: var(--surface-2); color: var(--muted); }
+.kind-observed { background: var(--accent-soft); color: var(--light); }
+.kind-inference { background: var(--warn-bg); color: var(--warn); }
+.kind-alternative { background: var(--surface-2); color: var(--ink); border: 1px dashed var(--line); }
+.kind-experiment { background: var(--ok-bg); color: var(--ok); }
+.decision { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 10px; border-radius: 999px; background: var(--surface-2); color: var(--ink); }
+.decision-big { font-size: 15px; padding: 3px 14px; }
+.decision-reject { background: var(--danger-bg); color: var(--danger); }
+.decision-investigate { background: var(--warn-bg); color: var(--warn); }
+.decision-review { background: var(--accent-soft); color: var(--light); }
+.decision-adopt { background: var(--ok-bg); color: var(--ok); }
+.claims { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; }
+.claims li { margin-bottom: 3px; }
 .chart text { fill: var(--muted); font-size: 10.5px; font-family: "Segoe UI", system-ui, sans-serif; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 }

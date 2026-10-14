@@ -63,6 +63,9 @@ export const api = {
   strategyDelete: (id) => request("DELETE", `/api/lab/strategies/${enc(id)}`),
   backtest: (body) => request("POST", "/api/lab/backtests", { body }),
   backtestValidate: (id, body) => request("POST", `/api/lab/backtests/${enc(id)}/validate`, { body }),
+  runReport: (id) => request("GET", `/api/lab/backtests/${enc(id)}/report`),
+  dataHealth: (params) => request("GET", "/api/lab/data-health", { params }),
+  duplicates: (params) => request("GET", "/api/lab/duplicates", { params }),
   experiments: (params) => request("GET", "/api/lab/experiments", { params }),
   experiment: (id) => request("GET", `/api/lab/experiments/${enc(id)}`),
 

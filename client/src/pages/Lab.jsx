@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { api } from "../api.js";
 import { useApp } from "../App.jsx";
 import { Chip, ConfirmButton, Empty, ErrorBox, Field, Issues, Kpi, Legend, LineChart, NullBand, Tabs } from "../components/ui.jsx";
+import { DecisionBanner, DuplicateChip, HealthGate, ReportContract } from "../components/LabReport.jsx";
 import { SERIES_COLORS, clock, num, pct, signClass } from "../format.js";
 import { configPatch } from "../copilot-context.js";
 import { useContextProvider, usePublishView, useRefreshOnTurnEnd } from "../assistant-hooks.js";
@@ -13,7 +14,8 @@ function VariantsBanner({ variants, mt, t }) {
   const level = variants.warning_level || "none";
   return (
     <div className={`banner ${level === "none" ? "" : level === "high" ? "banner-danger" : "banner-warn"}`}>
-      <b>{t("variants_tried")}: {variants.tried}</b> ({variants.family}) — {t("variants_note")}
+      <b>{t("variants_tried")}: {variants.tried}</b> ({variants.family})
+      {variants.related > 0 && <> + <b>{variants.related}</b> {t("related_variants")} = <b>{variants.effective}</b> {t("effective_variants")}</>} — {t("variants_note")}
       {mt && mt.variants_tried > 1 && (
         <span className="block num">
           {t("sharpe")} {num(mt.sharpe_annualised, 2)} → {t("haircut_sharpe")} {num(mt.haircut_sharpe_annualised, 2)} · p {num(mt.p_value, 4)} → {t("bonferroni")} {num(mt.p_value_bonferroni, 4)}
@@ -89,7 +91,9 @@ function RunView({ run, onValidated }) {
   const [validations, setValidations] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setValidations([]); setError(null); }, [run.run_id]);
+  const [report, setReport] = useState(null);
+  const loadReport = useCallback(() => api.runReport(run.run_id).then(setReport).catch(() => setReport(null)), [run.run_id]);
+  useEffect(() => { setValidations([]); setError(null); setReport(null); loadReport(); }, [run.run_id, loadReport]);
 
   const validate = async (reveal) => {
     setBusy(true);
@@ -99,6 +103,7 @@ function RunView({ run, onValidated }) {
       const res = await api.backtestValidate(run.run_id, { methods: Object.keys(methods).filter((k) => methods[k]), windows: Number(windows), n: Number(n), seed: Number(seed), grid: parsedGrid, reveal_holdout: reveal });
       setValidations((v) => [res, ...v]);
       setError(null);
+      loadReport();
       onValidated();
     } catch (e) { setError(e); } finally { setBusy(false); }
   };
@@ -118,7 +123,9 @@ function RunView({ run, onValidated }) {
         <Chip className="chip chip-accent">{run.window.start} → {run.window.end}</Chip><Chip>{run.window.bars} {t("bars").toLowerCase()}</Chip>
         {run.holdout && <Chip className={run.holdout.status === "opened" ? "chip chip-amber" : "chip chip-ok"}>{t(`holdout_${run.holdout.status}`)}</Chip>}
       </div>
+      <DecisionBanner decision={report ? { ...report.decision, reasons: report.decision.reasons.map((r) => r.text) } : run.decision} health={report?.data_health || run.data_health} duplicate={report?.duplicate || run.duplicate} t={t} lang={lang} />
       <VariantsBanner variants={run.variants} mt={run.multiple_testing} t={t} />
+      <HealthGate health={report?.data_health || run.data_health} t={t} lang={lang} />
       {run.warnings?.map((w, i) => <div key={i} className="banner banner-warn">{w}</div>)}
       <div className="kpis">
         <Kpi label={t("total_return")} value={pct(m.total_return, 1, lang, true)} tone={signClass(m.total_return)} />
@@ -173,6 +180,7 @@ function RunView({ run, onValidated }) {
         {run.holdout && <p className="help m-0">{t("reveal_hint")}</p>}
       </div>
       {validations.map((v) => <ValidationView key={v.validation_id} v={v} t={t} lang={lang} />)}
+      <ReportContract report={report} t={t} lang={lang} />
     </div>
   );
 }
@@ -288,7 +296,7 @@ function BacktestTab({ snapshots, refreshLog }) {
           {strategies.map((s) => (
             <div key={s.id} className="flex items-center justify-between gap-2">
               <button type="button" className="btn-link truncate text-left" onClick={() => loadStrategy(s.id)}>{s.name}</button>
-              <span className="flex items-center gap-2"><Chip>{s.variants_tried} {t("variants")}</Chip><ConfirmButton t={t} onConfirm={async () => { await api.strategyDelete(s.id); if (loaded?.id === s.id) setLoaded(null); loadStrategies(); }} /></span>
+              <span className="flex items-center gap-2"><Chip title={s.effective_variants !== s.variants_tried ? `${s.effective_variants} ${t("effective_variants")}` : undefined}>{s.variants_tried}{s.effective_variants > s.variants_tried ? ` (+${s.effective_variants - s.variants_tried})` : ""} {t("variants")}</Chip><ConfirmButton t={t} onConfirm={async () => { await api.strategyDelete(s.id); if (loaded?.id === s.id) setLoaded(null); loadStrategies(); }} /></span>
             </div>
           ))}
         </div>
@@ -313,7 +321,7 @@ function ExperimentsTab({ version, onOpen }) {
         {data.families.map((f) => (
           <button type="button" key={f.family} className="panel text-left" onClick={() => setFamily(family === f.family ? "" : f.family)} style={{ borderColor: family === f.family ? "var(--accent)" : undefined }}>
             <div className="flex items-center justify-between"><b>{f.family}</b><Chip className={WARN_CLASS[f.warning_level] || "chip"}>{f.warning_level}</Chip></div>
-            <div className="help">{f.variants} {t("variants")} · {f.runs} {t("runs")} · {f.failed_or_rejected} {t("failed")}</div>
+            <div className="help">{f.variants} {t("variants")}{f.related_variants > 0 ? ` (+${f.related_variants} ${t("related_variants")})` : ""} · {f.runs} {t("runs")} · {f.failed_or_rejected} {t("failed")}</div>
           </button>
         ))}
       </div>
@@ -323,13 +331,14 @@ function ExperimentsTab({ version, onOpen }) {
       </div>
       <div className="panel overflow-x-auto">
         <table className="num">
-          <thead><tr><th>{t("date")}</th><th>{t("kind")}</th><th>{t("family")}</th><th>{t("status")}</th><th className="r">{t("sharpe")}</th><th className="r">{t("total_return")}</th><th className="r">{t("max_drawdown")}</th><th className="r">{t("variants")}</th><th>id</th></tr></thead>
+          <thead><tr><th>{t("date")}</th><th>{t("kind")}</th><th>{t("family")}</th><th>{t("status")}</th><th className="r">{t("sharpe")}</th><th className="r">{t("total_return")}</th><th className="r">{t("max_drawdown")}</th><th className="r">{t("variants")}</th><th>{t("duplicate_risk")}</th><th>id</th></tr></thead>
           <tbody>{data.experiments.map((e) => (
             <tr key={e.id}>
               <td>{clock(e.created_at, lang)}</td><td>{t(`exp_${e.kind}`)}</td><td>{e.family}</td>
               <td><Chip className={e.status === "ok" ? "chip chip-ok" : "chip chip-danger"}>{e.status}</Chip>{e.error ? <span className="help block">{e.error}</span> : null}</td>
               <td className="r">{num(e.metrics?.sharpe, 2, lang)}</td><td className={`r ${signClass(e.metrics?.total_return)}`}>{pct(e.metrics?.total_return, 1, lang, true)}</td><td className="r">{pct(e.metrics?.max_drawdown, 1, lang)}</td>
-              <td className="r">{e.variants_in_family ?? "—"}</td>
+              <td className="r">{e.variants_in_family ?? "—"}{e.effective_variants > e.variants_in_family ? <span className="help"> (+{e.effective_variants - e.variants_in_family})</span> : null}</td>
+              <td>{e.duplicate_risk ? <DuplicateChip level={e.duplicate_risk} similar={e.duplicate_similar} t={t} /> : "—"}{e.duplicate_risk === "high" || e.duplicate_risk === "medium" ? <span className="help block">{(e.duplicate_similar || []).slice(0, 2).map((x) => x.name).join(", ")}</span> : null}</td>
               <td className="mono">{e.kind === "backtest" ? <button type="button" className="btn-link" onClick={() => onOpen(e.id)}>{e.id}</button> : e.id}</td>
             </tr>
           ))}</tbody>
