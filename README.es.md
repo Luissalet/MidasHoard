@@ -11,7 +11,36 @@ Laboratorio local de investigación de mercados para una sola persona. Congela l
 - **Laboratorio**: estrategias declarativas (JSON, sin código). Una señal en la barra t solo afecta a la posición que rinde en la barra t+1 (lo demuestra un test). Costes, tamaño de posición, rebalanceo, largo/corto, referencia, reserva sellada, walk-forward anclado con rejilla opcional de parámetros, prueba de permutación por bloques, intervalo bootstrap del Sharpe, ajuste de Bonferroni y Sharpe deflactado. Cada variante queda registrada, también los fallos, con aviso de pruebas múltiples.
 - **Comité**: dos defensas, un revisor de riesgos independiente y un árbitro sobre un paquete de evidencia fijo. Las citas se validan y cada número pasa por el libro de cifras (observado, derivado, citado, propuesto o sin respaldo). Sin modelo devuelve el paquete de evidencia y métricas deterministas.
 - **Cartera**: posiciones desde tabla o CSV, valoración a una fecha, distribución, exposición por divisa, concentración, volatilidad, caída máxima y correlación, con cada conversión registrada.
-- **Informes**: Markdown o JSON de una tesis, una ejecución o una cartera, con la procedencia de cada cifra.
+- **Informes**: Markdown o JSON de una tesis, una ejecución o una cartera, con la procedencia de cada cifra. El informe de una ejecución sigue el contrato del informe del laboratorio (más abajo) y también se exporta como HTML.
+- **Salud de datos**: nulos, ceros, cobertura por fecha, atípicos a 3 sigmas y huecos largos por serie, calculados antes de leer ninguna métrica.
+- **Duplicados**: la misma idea con otro nombre se detecta por mecanismo, no solo por el hash de la especificación, y cuenta como una prueba más.
+
+## Contrato del informe del laboratorio
+
+El informe de un backtest (`report_export` con `kind: "run"`, `GET /api/lab/backtests/{run_id}/report`, la pantalla Laboratorio) tiene siempre las mismas ocho secciones, en este orden:
+
+1. **Identidad y alcance** - estrategia, universo, ventana, qué parte es dentro de muestra y cuál fuera (holdout sellado o abierto; ventanas del walk-forward) y una etiqueta de calidad de la evidencia calculada por reglas.
+2. **Resumen**.
+3. **Puertas de salud** - salud de datos, tamaño de muestra, permutación, walk-forward, bootstrap, pruebas múltiples, holdout y riesgo de duplicado, cada una `pass`, `warn`, `fail` o `not_run`.
+4. **Métricas** - una tabla por ventana (desarrollo, fuera de muestra del walk-forward, holdout abierto); las ventanas nunca se mezclan en una tabla.
+5. **Mecanismo con alternativas**.
+6. **Riesgos y huecos de evidencia**.
+7. **Experimentos siguientes**, priorizados.
+8. **Decisión**: `reject` (rechazar), `investigate` (investigar), `review` (revisar) o `adopt` (adoptar), con los motivos.
+
+Cada afirmación lleva una etiqueta: **Observado** (leído de los artefactos guardados o calculado sobre ellos), **Inferencia**, **Alternativa** o **Experimento**. En JSON cada afirmación tiene `kind`; en Markdown la etiqueta va en negrita (`**[Observed]**`); en HTML y en la interfaz es una marca de color. Los argumentos, riesgos y razones del comité llevan `kind: "inference"`.
+
+La decisión se calcula con reglas fijas a partir de las validaciones que existen (ventanas positivas del walk-forward, p-valor de permutación, intervalo bootstrap, corrección por pruebas múltiples, holdout), la salud de los datos y las variantes probadas, incluidas las casi duplicadas con otro nombre. Ningún modelo la escribe ni la cambia. La falta de evidencia solo la baja: sin validaciones, con una puerta de datos en fallo o cobertura inferior al 90 %, con pocas barras u operaciones o con una ventana de menos de un año, como mucho es `investigate`; `adopt` exige además un holdout abierto que haya aguantado y ningún riesgo alto de duplicado. Un Sharpe neto negativo con al menos 120 barras, un walk-forward sin ninguna ventana positiva o un holdout fallido dan `reject`. Los umbrales se devuelven con la decisión.
+
+Reglas contra métricas inventadas, aplicadas en código: un nulo sigue siendo nulo y se muestra como `no data` (nunca 0); cada tabla declara su ventana; no hay puntuación compuesta (la calidad de la evidencia etiqueta cuánto se probó y no es un veredicto); el informe declara sus convenciones: el drawdown es una fracción negativa del máximo anterior y la rotación es la suma de |cambio de peso| al año, sin dividir por dos.
+
+### Salud de los datos
+
+`data_health` (herramienta, `GET /api/lab/data-health`) mide, por serie y ventana: proporción de celdas de precio nulas, proporción de ceros exactos, cobertura (fechas válidas entre fechas esperadas), rendimientos a más de 3 desviaciones típicas y huecos largos. Se calcula sobre la serie congelada antes de cualquier métrica, se guarda con cada ejecución y aparece como puerta en el informe. Los umbrales usados viajan con el resultado. Un cierre que falta nunca se rellena; el backtest avisa de dónde ha tenido que tratarlo como sin movimiento.
+
+### Duplicados
+
+Al registrar un experimento se compara con los de otras familias: solape de Jaccard de los tipos de indicador, de las hojas de las reglas (los indicadores se comparan por tipo, así que renombrar `fast` a `ma_corta` no cambia nada) y de los símbolos del universo, más el parecido del nombre y la nota (embeddings por Hoard Link si están disponibles, si no TF-IDF). `duplicate_risk` es `low`, `medium` o `high`, con los experimentos parecidos y el motivo. Nunca bloquea. Las variantes de otra familia con solape alto de mecanismo cuentan en `effective_variants`, que gobierna el nivel de aviso y la corrección por pruebas múltiples (`experiments_duplicates`, `GET /api/lab/duplicates`).
 
 ## Proveedores de datos
 
@@ -54,7 +83,7 @@ Con el lanzador compartido de Hoard Link instalado, la app muestra el panel de F
 
 ## Herramientas para asistentes (MCP)
 
-`mcp_server.py` es el puente stdio compartido de Hoard Link. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 27 herramientas:
+`mcp_server.py` es el puente stdio compartido de Hoard Link. Nunca abre la base de datos: reenvía cada llamada a `POST /api/agent/call` con el token de `data/mcp-token`, lee la lista de herramientas de `GET /api/agent/tools` y arranca la aplicación si nadie responde (`MIDAS_BRIDGE_AUTOSTART=0` lo desactiva). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Los errores conservan su `code` y su `hint`. Los borrados exigen `confirm: true` en la herramienta propietaria. Las 29 herramientas:
 
 ### Datos de mercado
 
@@ -90,6 +119,8 @@ Con el lanzador compartido de Hoard Link instalado, la app muestra el panel de F
 | `backtest_run` | Ejecutar backtest |
 | `backtest_validate` | Validar backtest |
 | `experiments_list` | Registro de experimentos |
+| `data_health` | Salud de datos |
+| `experiments_duplicates` | Duplicados |
 
 ### Cartera e informes
 
@@ -105,7 +136,7 @@ Referencia completa: [docs/API.md](docs/API.md).
 
 - Las instantáneas son inmutables y se verifican por hash al cargarlas; los mismos bytes reutilizan la instantánea.
 - `as_of` hace los análisis puntuales en el tiempo para los datos que tienes. FRED y otros proveedores publican valores revisados, así que las revisiones aún pueden filtrarse a fechas pasadas; cada instantánea lo indica.
-- Las variantes se cuentan por familia de estrategia (hashes de especificación distintos). El Sharpe deflactado necesita al menos 3 variantes.
+- Las variantes se cuentan por familia de estrategia (hashes de especificación distintos) más las variantes de otras familias que son la misma idea (solape alto de mecanismo). El Sharpe deflactado necesita al menos 3 variantes.
 - Los backtests simulan barras diarias con costes proporcionales: sin ejecución intradía, sin modelo de liquidez, sin impuestos y sin corrección por supervivencia.
 - El comité solo es tan bueno como la evidencia que le das; los números sin respaldo se marcan, no se eliminan.
 - El histórico de CoinGecko se limita a 365 días en el plan gratuito.

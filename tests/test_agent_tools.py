@@ -11,7 +11,7 @@ from midas_hoard.errors import MidasError
 
 def test_catalog_shape_and_description_rules():
     cat = tool_catalog()
-    assert len(cat) == 27 and len({t["name"] for t in cat}) == 27
+    assert len(cat) == 29 and len({t["name"] for t in cat}) == 29
     for t in cat:
         first = t["description"].splitlines()[0]
         assert len(first) <= 110, (t["name"], len(first))

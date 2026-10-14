@@ -24,7 +24,10 @@
     "report-export",
     "saved-watchlists",
     "snapshot-screening",
-    "partial-watchlist-refresh"
+    "partial-watchlist-refresh",
+    "lab-report-contract",
+    "data-health",
+    "duplicate-experiments"
   ],
   "placeholders": [
     "MIDAS_DIR",

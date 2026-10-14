@@ -163,7 +163,9 @@ class Committee:
             if bad:
                 flags.append(f"dropped citation(s) {', '.join(bad)}: not evidence ids of this thesis")
             good = [c for c in cites if c in allowed]
-            out.append({"text": str(item["text"]).strip()[:800], "evidence": good, "uncited": not good})
+            # claim kind (same vocabulary as the lab report): an argument, a risk or a reason is an interpretation of the pack, never an observation;
+            # the pack's own numbers keep the ledger's observed / derived provenance
+            out.append({"text": str(item["text"]).strip()[:800], "evidence": good, "uncited": not good, "kind": "inference"})
         return out, flags
 
     def run(self, thesis_id: str, *, use_model: bool = True) -> dict[str, Any]:

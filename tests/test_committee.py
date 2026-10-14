@@ -71,6 +71,19 @@ def test_full_committee_flow_with_ledger_and_citation_check(tmp_path):
         svc.stop()
 
 
+def test_committee_statements_carry_the_claim_kind(tmp_path):
+    svc = build(tmp_path, RoleLink(GOOD))
+    try:
+        t = seed(svc)
+        res = tool(svc, "committee_run", thesis_id=t["id"])
+        groups = [res["advocate_for"], res["advocate_against"], res["risk_review"], res["arbiter"]["reasons"]]
+        assert all(item["kind"] == "inference" for group in groups for item in group)
+        md = tool(svc, "report_export", kind="thesis", id=t["id"], save=False)["markdown"]
+        assert "**[Inference]** One dated metric, one opinion." in md and "**[Experiment]** Missing evidence: Earnings revisions" in md
+    finally:
+        svc.stop()
+
+
 def test_bad_verdict_is_recorded_as_inconclusive(tmp_path):
     handlers = {**GOOD, "arbiter": {"verdict": "buy", "confidence": "high", "reasons": []}}
     svc = build(tmp_path, RoleLink(handlers))

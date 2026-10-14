@@ -14,7 +14,7 @@ from .services import Services
 from .strategy import EXAMPLE_SPEC
 
 AGENT_INSTRUCTIONS = """Midas's Hoard is a local financial research lab: frozen market data, theses with evidence and invalidation rules, and an honest strategy backtester. Research, not advice: never say buy or sell; give analyses with their uncertainty.
-Flow: market_fetch (a snapshot with provenance) -> thesis_create (needs a rival hypothesis; rules like close(AAPL) < 150 or yoy(CPIAUCSL) > 4) -> thesis_evidence_add -> thesis_check. Labs: strategy_validate -> backtest_run (holdout_fraction seals a holdout) -> backtest_validate. Every variant is logged; quote the variants count with any metric.
+Flow: market_fetch (a snapshot with provenance) -> thesis_create (needs a rival hypothesis; rules like close(AAPL) < 150 or yoy(CPIAUCSL) > 4) -> thesis_evidence_add -> thesis_check. Labs: strategy_validate -> backtest_run (holdout_fraction seals a holdout) -> backtest_validate -> report_export(kind=run): eight fixed sections, every claim tagged Observed/Inference/Alternative/Experiment, and a decision (reject/investigate/review/adopt) computed by rules, never by a model. data_health checks the series before metrics; experiments_duplicates finds the same idea under another name. Every variant is logged; quote the effective variants count with any metric. A missing value is "no data", never 0.
 Quote numbers only from tool results. Never merge series of different currency or frequency: convert or resample explicitly. Write tools (fetch, create, update, check, save, run, validate, set) only when the user asks; deletes need confirm=true."""
 
 
@@ -233,6 +233,23 @@ class ExperimentsArgs(BaseModel):
     cursor: Optional[int] = Field(None, ge=0)
 
 
+class DataHealthArgs(BaseModel):
+    snapshot_ids: Optional[list[str]] = Field(None, max_length=40, description="Snapshots to check (ids from snapshots_list).")
+    run_id: Optional[str] = Field(None, max_length=40, description="Check the series a backtest used, on its data window.")
+    strategy: Optional[str] = Field(None, max_length=80, description="A saved strategy (id or name): checks its universe and benchmark.")
+    spec: Optional[dict[str, Any]] = Field(None, description="A strategy spec (not yet saved): checks its universe and benchmark.")
+    start: Optional[str] = Field(None, max_length=10, description="YYYY-MM-DD; default the dates all the series share (or the whole range for one).")
+    end: Optional[str] = Field(None, max_length=10, description="YYYY-MM-DD")
+
+
+class DuplicatesArgs(BaseModel):
+    run_id: Optional[str] = Field(None, max_length=40, description="Duplicate risk of this experiment against the other families.")
+    strategy: Optional[str] = Field(None, max_length=80, description="A saved strategy (id or name), checked before running it.")
+    spec: Optional[dict[str, Any]] = Field(None, description="A spec not yet run, checked before spending a trial on it.")
+    min_level: Literal["low", "medium", "high"] = Field("medium", description="With nothing else given: list the experiments at or above this risk.")
+    limit: int = Field(20, ge=1, le=100)
+
+
 class CommitteeArgs(BaseModel):
     thesis_id: str = Field(..., max_length=40)
     use_model: bool = Field(True, description="False returns the evidence pack and deterministic metrics without asking a model.")
@@ -262,7 +279,7 @@ class PortfolioAnalyzeArgs(BaseModel):
 class ReportArgs(BaseModel):
     kind: Literal["thesis", "run", "portfolio"]
     id: str = Field(..., max_length=60)
-    format: Literal["md", "json"] = "md"
+    format: Literal["md", "json", "html"] = Field("md", description="html: run reports only (tagged claims and a decision badge).")
     save: bool = Field(True, description="Also write the file under data/reports/.")
     cursor: int = Field(0, ge=0, description="Character offset when the Markdown is longer than one page.")
     page_chars: int = Field(14000, ge=1000, le=16000)
@@ -425,6 +442,14 @@ def run_experiments_list(svc: Services, args: ExperimentsArgs) -> dict:
     return svc.lab.experiments(family=args.family, kind=args.kind, status=args.status, limit=args.limit, cursor=args.cursor)
 
 
+def run_data_health(svc: Services, args: DataHealthArgs) -> dict:
+    return svc.lab.data_health(snapshot_ids=args.snapshot_ids, run_id=args.run_id, strategy=args.strategy, spec=args.spec, start=args.start, end=args.end)
+
+
+def run_experiments_duplicates(svc: Services, args: DuplicatesArgs) -> dict:
+    return svc.lab.duplicates(run_id=args.run_id, spec=args.spec, strategy=args.strategy, min_level=args.min_level, limit=args.limit)
+
+
 def run_committee(svc: Services, args: CommitteeArgs) -> dict:
     return svc.committee.run(args.thesis_id, use_model=args.use_model)
 
@@ -452,7 +477,11 @@ def run_report_export(svc: Services, args: ReportArgs) -> dict:
     res["total_chars"] = len(md)
     res["next_cursor"] = args.cursor + args.page_chars if args.cursor + args.page_chars < len(md) else None
     if res.get("json") is not None:
-        res["json"] = cap_result({"data": res["json"]})["data"] if len(json.dumps(res["json"], default=str)) < MAX_RESULT_BYTES else {"note": "JSON saved to `path`; too large to inline."}
+        data = res["json"]
+        if len(json.dumps(data, default=str)) < MAX_RESULT_BYTES:
+            res["json"] = cap_result({"data": data})["data"]
+        else:  # too large to inline; a run's report contract (the part an assistant reads) always stays
+            res["json"] = {"note": "JSON saved to `path`; too large to inline.", **({"report": data["report"]} if isinstance(data, dict) and "report" in data else {})}
     return res
 
 
@@ -559,6 +588,18 @@ TOOLS: list[Tool] = [
          "Shows variants tried per family and a multiple-testing warning level.\n"
          "Sinónimos: experimentos, historial de pruebas, variantes probadas, resultados negativos.",
          ExperimentsArgs, _ann(True), run_experiments_list),
+    Tool("data_health",
+         "Data health of series: % nulls, % zeros, coverage by date, 3-sigma outliers, long gaps. Salud de datos.\n"
+         "Computed on raw frozen snapshots before any metric, per series and window, with the thresholds used; nulls are reported, never filled. "
+         "Accepts snapshot_ids, a run_id, a saved strategy or a spec. Coverage under 90 % caps a report decision at 'investigate'.\n"
+         "Sinónimos: calidad de datos, huecos, nulos, ceros, atípicos, cobertura, comprobar datos antes de interpretar.",
+         DataHealthArgs, _ann(True), run_data_health),
+    Tool("experiments_duplicates",
+         "Find the same idea under another name: shared indicators, rules, universe, description. Duplicados.\n"
+         "duplicate_risk low/medium/high with the similar experiments and why (Jaccard overlap of mechanism; embeddings or TF-IDF for the text). "
+         "Never blocks; high-risk variants count in family_stats and the multiple-testing correction. Check a run_id, a strategy or a spec before running it.\n"
+         "Sinónimos: duplicados, misma idea con otro nombre, variantes repetidas, solape de estrategias, riesgo de duplicado.",
+         DuplicatesArgs, _ann(True), run_experiments_duplicates),
     Tool("committee_run",
          "Run the committee on a thesis: advocates, risk reviewer, arbiter, number ledger. Comité de inversión.\n"
          "Model-backed (Hoard Link); advocates cite only evidence ids; the arbiter's verdict (strengthen|weaken|inconclusive, confidence) is not a vote average; "

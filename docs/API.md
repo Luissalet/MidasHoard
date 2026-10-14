@@ -31,6 +31,9 @@ Base URL `http://127.0.0.1:5192`. Every body is JSON. Errors are `{"error", "cod
 | `GET/POST /api/lab/strategies`, `GET/PATCH/DELETE /api/lab/strategies/{id}` | `strategies_list`, `strategy_save` |
 | `POST /api/lab/backtests`, `POST /api/lab/backtests/{run_id}/validate` | `backtest_run`, `backtest_validate` |
 | `GET /api/lab/experiments`, `GET /api/lab/experiments/{run_id}` | `experiments_list` |
+| `GET /api/lab/backtests/{run_id}/report?format=json\|md\|html` | `report_export` (kind `run`; `json` returns the report contract, `md`/`html` `{text}`) |
+| `GET /api/lab/data-health?snapshot_ids=a,b&run_id=&strategy=&start=&end=` | `data_health` |
+| `GET /api/lab/duplicates?run_id=&strategy=&min_level=&limit=`, `POST /api/lab/duplicates` `{spec}` | `experiments_duplicates` |
 | `GET /api/portfolios`, `GET/PUT/PATCH/DELETE /api/portfolios/{name}`, `POST /api/portfolios/{name}/analyze` | `portfolio_analyze`, `portfolio_set` |
 | `POST /api/reports` | `report_export` |
 | `GET/PUT /api/settings` | language, offline, clear_cache, backend, keys (write-only: `{provider: key}`, empty removes; responses carry `keys.<id> = {configured, last4, source}`, never the value) |
@@ -256,6 +259,8 @@ Backtest a strategy: metrics, equity, trades, benchmark, variants tried. _writes
 | `split_date` | string | Seal everything from this date instead of a fraction. |
 | `label` | string |  |
 
+Besides the metrics, the result has `data_health` (computed before the run, see `data_health`), `duplicate` (see `experiments_duplicates`), `decision` and `evidence_quality` (see `report_export`) and `variants {family, tried, related, effective, warning_level}`: `tried` counts the distinct specs of the family, `related` the variants of other families that are the same idea, `effective` their sum, which is what `multiple_testing.variants_tried` and `warning_level` use.
+
 ### `backtest_validate`
 
 Stress a backtest: walk-forward, permutation test, bootstrap Sharpe CI, multiple testing. _writes._
@@ -283,6 +288,40 @@ List every backtest variant ever run, failures included, or one run in detail. _
 | `status` | string |  |
 | `limit` | integer |  |
 | `cursor` | integer |  |
+
+### `data_health`
+
+Data health of series: % nulls, % zeros, coverage by date, 3-sigma outliers, long gaps. _read-only._
+
+Computed on the raw frozen snapshots before any metric, per series and window. Give one of `snapshot_ids`, `run_id` (the data a backtest used, on its window), `strategy` (saved, id or name) or `spec`. Without `start`/`end` the window is the dates all the series share (the whole range for one). A null is reported, never filled or counted as 0.
+
+| Argument | Type | Notes |
+|---|---|---|
+| `snapshot_ids` | array | Snapshots to check (ids from `snapshots_list`). |
+| `run_id` | string | The series a backtest used, on its data window. |
+| `strategy` | string | A saved strategy (id or name): checks its universe and benchmark. |
+| `spec` | object | A strategy spec (not yet saved). |
+| `start`, `end` | string | YYYY-MM-DD. |
+
+Result: `{summary: {status: pass|warn|fail|unknown, series, min_coverage, issues: [{series, issue}], thresholds}, series: [{snapshot, symbol, window, rows, status, metrics, gates, issues, outliers, gaps, basis}], window, note}`. `metrics` has `null_ratio`, `zero_ratio` (open/high/low/close cells), `coverage_ratio` with `valid_dates` and `expected_dates`, `outlier_ratio_3sigma` and `outlier_count`, `long_gaps`, `longest_gap_days`, `long_gap_threshold_days` (the larger of 7 days and three times the median gap), `null_closes`. Each gate has `status` and the `threshold` that produced it: coverage warns under 95 % and fails under 90 %; nulls warn over 2 % and fail over 10 %; zeros warn over 1 % and fail over 5 %; outliers warn over 2 %; a gap beyond the long-gap threshold warns and beyond four times it fails; fewer than 20 valid rows fails. Coverage counts business days for daily series without weekend rows, calendar days for series that trade every day and one value per period for weekly and slower series; holidays are not removed.
+
+### `experiments_duplicates`
+
+Find the same idea under another name: shared indicators, rules, universe, description. _read-only._
+
+Compares an experiment with those of the other families. Mechanism score = 0.3 x Jaccard of indicator kinds + 0.5 x Jaccard of rule leaves (indicator names replaced by their kind, constants by `#`) + 0.2 x Jaccard of universe symbols; `high` from 0.75, `medium` from 0.45. The similarity of name and note (embeddings through Hoard Link when the family embedder is up, otherwise TF-IDF cosine) raises a level (`medium` alone, `high` with a medium mechanism score) and never lowers it. It never blocks. Variants of other families at `high` mechanism overlap count in the family's `effective_variants`.
+
+| Argument | Type | Notes |
+|---|---|---|
+| `run_id` | string | Duplicate risk of this experiment against the other families. |
+| `strategy` | string | A saved strategy, before running it. |
+| `spec` | object | A spec not yet run. |
+| `min_level` | string | With nothing else given: list the experiments at or above this risk (default `medium`). |
+| `limit` | integer | |
+
+Result for one experiment or spec: `{level: low|medium|high, similar: [{experiment, name, family, spec_hash, level, mechanism_score, text_score, text_method, why: []}], similar_total, text_method, compared_with, method, note}`. Without arguments: `{experiments: [{experiment, name, family, level, similar}], total, compared, ...}`.
+
+Each listed experiment has `variants_in_family`, `effective_variants`, `warning_level`, `duplicate_risk` (`low|medium|high`; null for kinds other than backtests) and `duplicate_similar`; each family has `variants`, `related_variants` and `effective_variants`. With `run_id` the detail also has `decision`, `data_health`, `duplicate` and `evidence_quality`.
 
 ### `committee_run`
 
@@ -325,11 +364,19 @@ Value and analyse a portfolio: allocation, currency exposure, vol, drawdown, cor
 
 Export a thesis, run or portfolio as Markdown/JSON with provenance for every number. _writes._
 
+For `kind: "run"` the report follows the lab report contract. `format: "html"` is available for runs only; `json` adds `report` to the run document.
+
+**Contract.** Eight sections in a fixed order (`identity`, `summary`, `gates`, `metrics`, `mechanism`, `risks`, `next`, `decision`), each `{id, number, title, title_es, claims, ...}`; `gates` adds `gates: [{id, label, status: pass|warn|fail|not_run, kind, text}]`, `metrics` adds `tables: [{id, title, scope: in_sample|walk_forward_oos|holdout, window, rows: [{metric, strategy, benchmark, strategy_text, benchmark_text, note}]}]` (a missing value is `null` with the text `no data`; `benchmark_text` is empty where a benchmark does not apply), `decision` adds `decision`. Every claim is `{kind: observed|inference|alternative|experiment, text}`; experiments also carry `priority`, `why` and `tool`. Also in the report: `evidence_quality {grade: strong|moderate|weak|insufficient, reason}` (a label of how much was tested, not a score), `data_health`, `duplicate` and `contract` (section order, tag labels in English and Spanish, conventions).
+
+**Decision.** `{decision: reject|investigate|review|adopt, label: {en, es}, meaning, because: [rule ids], reasons: [{id, effect: reject|cap_investigate|cap_review, text}], supports: [{id, text}], needs: [], thresholds, rules_version, method}`. It is a pure function of the validations stored for the run (the latest result of each method; an opened holdout stays opened), the data health and the effective variants: `adopt` needs every condition met, each unmet condition caps the outcome at `review` or `investigate`, and `reject` needs negative evidence on enough trustworthy data (net Sharpe at most 0 over at least 120 bars, a walk-forward of at least 3 windows with none positive, or an opened holdout that lost after a positive development Sharpe). Data that is thin or failing (fewer than 60 bars, under one year, fewer than 5 trades, a failing health gate, coverage under 90 %) can only give `investigate`. Backtest and validation results carry a compact `decision {decision, label, because, reasons, needs}`; `experiments_list` with `run_id` adds `decision`, `data_health`, `duplicate` and `evidence_quality`.
+
+**Conventions stated in every report.** Drawdown is a negative fraction of the previous equity peak. Turnover is the sum of |change in target weight| over assets and bars divided by the years of the window (not halved). No composite score exists. A null is never replaced by 0. Each table declares its window.
+
 | Argument | Type | Notes |
 |---|---|---|
 | `kind` * | string |  |
 | `id` * | string |  |
-| `format` | string |  |
+| `format` | string | `md`, `json` or `html` (runs only). |
 | `save` | boolean | Also write the file under data/reports/. |
 | `cursor` | integer | Character offset when the Markdown is longer than one page. |
 | `page_chars` | integer |  |
@@ -353,4 +400,4 @@ Export a thesis, run or portfolio as Markdown/JSON with provenance for every num
 - `watchlist_view` / POST /api/watchlists/{id}/view: lookback observation intervals, as_of, query, currency, minimum change percent, maximum drawdown magnitude, sort and cursor. Data/snapshot SHA accompanies each row.
 - `watchlist_refresh` / POST /api/watchlists/{id}/refresh: fetch new immutable snapshots from existing providers. CSV remains pinned; per-entry failures preserve the previous source; concurrent name/membership/source changes remain. Each successful result reports whether it was attached to the current list.
 
-See WATCHLISTS.md for semantics and limits. The native catalogue has27 tools.
+See WATCHLISTS.md for semantics and limits. The native catalogue has 29 tools.

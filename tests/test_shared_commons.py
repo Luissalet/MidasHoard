@@ -68,7 +68,7 @@ def test_the_shared_bridge_calls_the_tools_of_the_running_app(running_app, monke
         return tools, fetched, missing
 
     tools, fetched, missing = asyncio.run(go())
-    assert len(tools) == 27
+    assert len(tools) == 29
     assert not fetched.is_error and fetched.body["snapshot"]["rows"] > 1000
     assert missing.is_error and missing.body["code"] == "not_found" and missing.body["hint"]
 

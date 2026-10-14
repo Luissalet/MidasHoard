@@ -17,6 +17,9 @@ from typing import Any, Callable, Optional
 
 import pandas as pd
 
+from . import duplicates as dup
+from . import health as health_mod
+from . import labreport
 from . import reports as reports_mod
 from . import validation as val
 from .backtest import BacktestOutput, prepare_universe, run_backtest
@@ -38,10 +41,14 @@ def _plain(doc: Any) -> Any:
 
 class Lab:
     def __init__(self, db: Database, store: SnapshotStore, runs_dir: Path, *, emit: Callable[[str, dict[str, Any]], None] = lambda t, d: None,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time, embedder: Optional[Callable[[list[str]], list[list[float]]]] = None):
         self.db, self.store, self.runs_dir, self.emit, self.clock = db, store, Path(runs_dir), emit, clock
         self.runs_dir.mkdir(parents=True, exist_ok=True)
         self._cache: dict[str, Snapshot] = {}
+        self.embedder = embedder  # texts -> vectors (Hoard Link / Borges); None -> lexical TF-IDF for the description similarity
+        self._symbols: dict[str, str] = {}
+        self._features: dict[str, dict[str, Any]] = {}
+        self._related: dict[tuple, dict[str, Any]] = {}
 
     # ---------------------------------------------------------------- data
     def load(self, snapshot_id: str) -> Snapshot:
@@ -118,13 +125,89 @@ class Lab:
             spec = json.loads(r["spec"])
             fam = self.family_stats(spec.get("family") or spec["name"])
             out.append({"id": r["id"], "name": r["name"], "spec_hash": r["spec_hash"], "note": r["note"], "updated_at": r["updated_ts"],
-                        "universe": spec["universe"], "variants_tried": fam["variants"], "spec": spec})
+                        "universe": spec["universe"], "variants_tried": fam["variants"], "effective_variants": fam["effective_variants"], "spec": spec})
         return out
 
     def delete_strategy(self, ident: str) -> dict[str, Any]:
         s = self.strategy(ident)
         self.db.execute("DELETE FROM strategies WHERE id = ?", (s["id"],))
         return {"deleted": s["id"], "name": s["name"], "note": "Experiments run with it stay in the log."}
+
+    # ----------------------------------------------------- mechanism duplicates
+    def _symbol_of(self, snapshot_id: str) -> str:
+        sym = self._symbols.get(snapshot_id)
+        if sym is None:
+            row = self.db.one("SELECT symbol FROM snapshots WHERE id = ?", (snapshot_id,))
+            sym = row["symbol"] if row else snapshot_id
+            self._symbols[snapshot_id] = sym
+        return sym
+
+    def _feat(self, spec: dict[str, Any], key: str = "") -> dict[str, Any]:
+        """Name-free features of a spec (cached by spec hash plus the labels that feed the text similarity)."""
+        ck = f"{key}|{spec.get('name', '')}|{spec.get('family', '')}|{spec.get('note', '')}" if key else ""
+        if ck and ck in self._features:
+            return self._features[ck]
+        f = dup.spec_features(spec, self._symbol_of)
+        if ck:
+            if len(self._features) > 2000:
+                self._features.clear()
+            self._features[ck] = f
+        return f
+
+    def _exp_signature(self) -> tuple:
+        r = self.db.one("SELECT COUNT(*) AS n, COALESCE(MAX(rowid), 0) AS m FROM experiments")
+        return (r["n"], r["m"])
+
+    def _variant_rows(self) -> list[dict[str, Any]]:
+        """One row per (family, spec_hash) of the successful backtests and walk-forward candidates, the oldest first."""
+        rows = self.db.query("SELECT id, family, name, spec_hash, spec, sharpe_pp, created_ts FROM experiments WHERE kind IN ('backtest','wf_candidate') "
+                             "AND status = 'ok' AND spec_hash != '' ORDER BY created_ts, rowid")
+        seen: dict[tuple[str, str], dict[str, Any]] = {}
+        for r in rows:
+            k = (r["family"], r["spec_hash"])
+            if k in seen:
+                continue
+            try:
+                spec = json.loads(r["spec"])
+            except ValueError:
+                continue
+            seen[k] = {"id": r["id"], "family": r["family"], "name": r["name"], "spec_hash": r["spec_hash"], "spec": spec, "sharpe_pp": r["sharpe_pp"],
+                       "features": self._feat(spec, r["spec_hash"])}
+        return list(seen.values())
+
+    def related_variants(self, family: str) -> dict[str, Any]:
+        """Variants of OTHER families that are the same idea as a variant of ``family`` (mechanism score >= high): they count as trials of it."""
+        sig = (family, self._exp_signature())
+        hit = self._related.get(sig)
+        if hit is not None:
+            return hit
+        rows = self._variant_rows()
+        own = [r for r in rows if r["family"] == family]
+        own_hashes = {r["spec_hash"] for r in own}
+        related: dict[str, dict[str, Any]] = {}
+        for c in rows:
+            if c["family"] == family or c["spec_hash"] in own_hashes or c["spec_hash"] in related:
+                continue
+            for o in own:
+                m = dup.mechanism_score(o["features"], c["features"])
+                if m["score"] >= dup.HIGH_MECHANISM:
+                    related[c["spec_hash"]] = {"experiment": c["id"], "family": c["family"], "name": c["name"], "spec_hash": c["spec_hash"],
+                                               "mechanism_score": m["score"], "sharpe_pp": c["sharpe_pp"]}
+                    break
+        out = {"count": len(related), "items": list(related.values())}
+        if len(self._related) > 500:
+            self._related.clear()
+        self._related[sig] = out
+        return out
+
+    def duplicate_check(self, spec: dict[str, Any], *, family: Optional[str] = None, exclude_id: Optional[str] = None, limit: int = 5) -> dict[str, Any]:
+        """Duplicate risk of a spec against the experiments of other families: by mechanism and by description."""
+        fam = family if family is not None else (spec.get("family") or spec.get("name", ""))
+        feats = dup.spec_features(spec, self._symbol_of)
+        cands = [c for c in self._variant_rows() if c["family"] != fam and c["id"] != exclude_id]
+        res = dup.find_similar(feats, cands, embedder=self.embedder, limit=limit)
+        res["compared_with"] = len(cands)
+        return res
 
     # --------------------------------------------------------- experiments
     def family_stats(self, family: str) -> dict[str, Any]:
@@ -135,8 +218,15 @@ class Lab:
             seen.setdefault(r["spec_hash"], r["sharpe_pp"])
         total = self.db.one("SELECT COUNT(*) AS n FROM experiments WHERE family = ? AND kind IN ('backtest','wf_candidate')", (family,))["n"]
         n = len(seen)
-        return {"family": family, "variants": n, "runs": total, "trial_sharpes": [v for v in seen.values() if v is not None],
-                "warning_level": "strong" if n >= 20 else "moderate" if n >= 5 else "none"}
+        rel = self.related_variants(family) if n else {"count": 0, "items": []}
+        trials = dict(seen)
+        for item in rel["items"]:
+            trials.setdefault(item["spec_hash"], item["sharpe_pp"])
+        eff = n + rel["count"]
+        return {"family": family, "variants": n, "runs": total, "trial_sharpes": [v for v in trials.values() if v is not None],
+                "related_variants": rel["count"], "related": [{k: i[k] for k in ("experiment", "family", "name", "mechanism_score")} for i in rel["items"][:10]],
+                "effective_variants": eff,
+                "warning_level": "strong" if eff >= 20 else "moderate" if eff >= 5 else "none"}
 
     def _log(self, *, exp_id: str, kind: str, spec: dict[str, Any], status: str, error: str = "", summary: Optional[dict[str, Any]] = None,
              parent: Optional[str] = None, sharpe_pp: Optional[float] = None, n_obs: int = 0, as_of: str = "", snapshot_ids: Optional[list[str]] = None,
@@ -172,18 +262,29 @@ class Lab:
         for r in rows:
             s = json.loads(r["summary"] or "{}")
             fam = fam_cache.setdefault(r["family"], self.family_stats(r["family"]))
+            dupr = None
+            if r["kind"] == "backtest" and r["status"] == "ok":
+                dupr = s.get("duplicate")
+                if dupr is None:
+                    try:
+                        dupr = self.duplicate_check(json.loads(r["spec"]), family=r["family"], exclude_id=r["id"])
+                    except (ValueError, KeyError):
+                        dupr = None
             items.append({"id": r["id"], "created_at": r["created_ts"], "kind": r["kind"], "family": r["family"], "name": r["name"], "spec_hash": r["spec_hash"],
                           "status": r["status"], "error": r["error"], "as_of": r["as_of"], "parent": r["parent_id"],
                           "ref": ArtifactRef("midas", "run", r["id"]).uri if r["kind"] == "backtest" else None,
                           "metrics": {k: (s.get("metrics") or s).get(k) for k in ("total_return", "sharpe", "max_drawdown", "trades")},
-                          "variants_in_family": fam["variants"], "warning_level": fam["warning_level"]})
+                          "variants_in_family": fam["variants"], "effective_variants": fam["effective_variants"], "warning_level": fam["warning_level"],
+                          "duplicate_risk": dupr["level"] if dupr else None,
+                          "duplicate_similar": [{k: x[k] for k in ("experiment", "name", "family", "level", "why")} for x in (dupr or {}).get("similar", [])[:3]]})
         fams = []
         for r in self.db.query("SELECT family FROM experiments GROUP BY family ORDER BY MAX(created_ts) DESC LIMIT 50"):
             f = self.family_stats(r["family"])
             fails = self.db.one("SELECT COUNT(*) AS n FROM experiments WHERE family = ? AND status IN ('failed','rejected')", (r["family"],))["n"]
-            fams.append({"family": f["family"], "variants": f["variants"], "runs": f["runs"], "failed_or_rejected": fails, "warning_level": f["warning_level"]})
+            fams.append({"family": f["family"], "variants": f["variants"], "related_variants": f["related_variants"], "effective_variants": f["effective_variants"],
+                         "runs": f["runs"], "failed_or_rejected": fails, "warning_level": f["warning_level"]})
         return {"experiments": items, "total": total, "next_cursor": offset + limit if offset + limit < total else None, "families": fams,
-                "note": "Every variant ever run is kept, failures included; 'variants' is what a multiple-testing correction must account for."}
+                "note": "Every variant ever run is kept, failures included; 'effective_variants' (variants plus near-duplicates under other names) is what a multiple-testing correction must account for."}
 
     # ------------------------------------------------------------------ run
     def _split(self, spec: dict[str, Any], as_of: Optional[str], fraction: Optional[float], split_date: Optional[str]) -> Optional[dict[str, Any]]:
@@ -226,6 +327,7 @@ class Lab:
             split = self._split(n, as_of, holdout_fraction, split_date)
             if split:
                 cutoff = split["dev_end"]
+            health = self._spec_health(n, cutoff)  # before any metric is computed
             out = run_backtest(n, self.load, as_of=cutoff)
         except MidasError as error:
             self._log(exp_id=run_id, kind="backtest", spec=n, status="failed", error=f"{error.code}: {error.message}", strategy_id=strategy_id, as_of=cutoff or "",
@@ -245,11 +347,14 @@ class Lab:
         self._log(exp_id=run_id, kind="backtest", spec=n, status="ok", summary=summary, sharpe_pp=out.metrics.get("sharpe_per_period"), n_obs=out.metrics["bars"],
                   as_of=effective_as_of, snapshot_ids=self._snapshot_ids(n), strategy_id=strategy_id)
         fam = self.family_stats(n["family"])
-        mt = val.multiple_testing(out.metrics.get("sharpe_per_period"), out.metrics["bars"], fam["trial_sharpes"], fam["variants"], skew=out.metrics.get("skew"),
+        mt = val.multiple_testing(out.metrics.get("sharpe_per_period"), out.metrics["bars"], fam["trial_sharpes"], fam["effective_variants"], skew=out.metrics.get("skew"),
                                   kurt=out.metrics.get("kurtosis"), ppy=out.universe.ppy, family=n["family"])
-        doc = self._doc(run_id, n, out, fam, mt, split)
+        dupres = self.duplicate_check(n, family=n["family"], exclude_id=run_id)
+        doc = self._doc(run_id, n, out, fam, mt, split, health, dupres)
         run_dir = self._write_artifacts(run_id, n, out, doc)
-        self.db.execute("UPDATE experiments SET summary = ? WHERE id = ?", (json.dumps({**summary, "multiple_testing": {k: mt.get(k) for k in ("variants_tried", "warning_level", "p_value_bonferroni", "haircut_sharpe_annualised")}}, default=str), run_id))
+        self.db.execute("UPDATE experiments SET summary = ? WHERE id = ?", (json.dumps({**summary, "multiple_testing": {k: mt.get(k) for k in ("variants_tried", "warning_level", "p_value_bonferroni", "haircut_sharpe_annualised")},
+                                                                                        "duplicate": dupres, "data_health": {k: health["summary"].get(k) for k in ("status", "min_coverage")}}, default=str), run_id))
+        report = self.run_report(run_id)
         self.emit("midas.backtest.finished", {"run": run_id, "strategy": n["name"][:60], "ok": True})
         step = max(1, len(out.equity) // 120)
         eq = out.equity.iloc[::step]
@@ -257,7 +362,8 @@ class Lab:
             eq = pd.concat([eq, out.equity.iloc[[-1]]])
         return {"run_id": run_id, "ref": ArtifactRef("midas", "run", run_id).uri, "status": "ok", "strategy": n["name"], "spec_hash": spec_hash(n),
                 "window": out.window, "metrics": out.metrics, "benchmark": out.benchmark,
-                "variants": {"family": fam["family"], "tried": fam["variants"], "warning_level": fam["warning_level"]}, "multiple_testing": mt,
+                "variants": self._variants_doc(fam), "multiple_testing": mt, "data_health": health, "duplicate": dupres,
+                "decision": self._decision_brief(report["decision"]), "evidence_quality": report["evidence_quality"],
                 "holdout": split, "conversions": out.conversions, "warnings": out.warnings, "trades_total": len(out.trades), "trades": out.trades[:25],
                 "equity": [{"date": ts.strftime("%Y-%m-%d"), "equity": round(float(r.equity), 2), "drawdown": round(float(r.drawdown), 4),
                             "benchmark": round(float(r.benchmark_equity), 2)} for ts, r in eq.iterrows()],
@@ -270,9 +376,167 @@ class Lab:
                 ids.append(extra)
         return ids
 
-    def _doc(self, run_id: str, n: dict[str, Any], out: BacktestOutput, fam: dict[str, Any], mt: dict[str, Any], split: Optional[dict[str, Any]]) -> dict[str, Any]:
+    # ------------------------------------------------------------ data health
+    def _health_ids(self, spec: dict[str, Any]) -> list[str]:
+        ids = list(spec["universe"])
+        bench = (spec.get("benchmark") or {}).get("snapshot")
+        if bench and bench not in ids:
+            ids.append(bench)
+        return ids
+
+    def snapshot_health(self, snapshot_ids: list[str], *, start: Optional[str] = None, end: Optional[str] = None, common_window: bool = False) -> dict[str, Any]:
+        """Health of each snapshot over [start, end]. With ``common_window`` and no explicit bounds, the window is the dates all of them share."""
+        snaps = [self.load(i) for i in snapshot_ids]
+        if common_window and (start is None or end is None) and snaps:
+            firsts = [x.df.index[0] for x in snaps if len(x.df)]
+            lasts = [x.df.index[-1] for x in snaps if len(x.df)]
+            if firsts and lasts and max(firsts) <= min(lasts):
+                start = start or max(firsts).strftime("%Y-%m-%d")
+                end = end or min(lasts).strftime("%Y-%m-%d")
+        series = [health_mod.snapshot_health(x, start=start, end=end) for x in snaps]
+        return {"summary": health_mod.summarize(series), "series": series, "window": {"start": start, "end": end}}
+
+    def _spec_health(self, spec: dict[str, Any], cutoff: Optional[str]) -> dict[str, Any]:
+        try:
+            return self.snapshot_health(self._health_ids(spec), end=cutoff, common_window=True)
+        except MidasError:
+            return {"summary": {"status": "unknown", "series": 0, "min_coverage": None, "issues": [], "note": "a snapshot could not be loaded"}, "series": [],
+                    "window": {"start": None, "end": cutoff}}
+
+    def data_health(self, *, snapshot_ids: Optional[list[str]] = None, run_id: Optional[str] = None, strategy: Optional[str] = None,
+                    spec: Optional[dict[str, Any]] = None, start: Optional[str] = None, end: Optional[str] = None) -> dict[str, Any]:
+        """Data health of snapshots, of the universe of a saved strategy or spec, or of the data a run used."""
+        if run_id:
+            row = self._exp(run_id)
+            sp = json.loads(row["spec"])
+            ids = self._health_ids(sp) if sp.get("universe") else []
+            win = {}
+            mfile = self.runs_dir / run_id / "metrics.json"
+            if mfile.is_file():
+                win = (json.loads(mfile.read_text(encoding="utf-8")).get("window") or {})
+            res = self.snapshot_health(ids, start=start or win.get("data_start"), end=end or win.get("end") or row["as_of"] or None, common_window=not (start or win))
+            res["run_id"] = run_id
+        else:
+            if strategy:
+                spec = self.strategy(strategy)["spec"]
+            if spec is not None:
+                snapshot_ids = self._health_ids(spec)
+            if not snapshot_ids:
+                raise MidasError("invalid_request", "data_health needs snapshot_ids, run_id, strategy or spec.", "Pass e.g. snapshot_ids=['snp_...'] (see snapshots_list).")
+            res = self.snapshot_health(list(snapshot_ids), start=start, end=end, common_window=start is None and end is None)
+        res["note"] = "Computed on the raw frozen series before any metric. A null is reported as null, never filled or counted as 0."
+        return res
+
+    # ---------------------------------------------------------------- report
+    def _validation_docs(self, run_id: str) -> list[dict[str, Any]]:
+        out = []
+        for r in self.db.query("SELECT id FROM experiments WHERE parent_id = ? AND kind = 'validation' AND status = 'ok' ORDER BY created_ts, rowid", (run_id,)):
+            f = self.runs_dir / run_id / f"validation-{r['id']}.json"
+            if f.is_file():
+                try:
+                    out.append(json.loads(f.read_text(encoding="utf-8")))
+                except ValueError:
+                    continue
+        return out
+
+    @staticmethod
+    def _trade_row(t: dict[str, str]) -> dict[str, Any]:
+        out: dict[str, Any] = dict(t)
+        for k in ("entry_price", "exit_price", "weight", "return", "gross_return"):
+            try:
+                out[k] = float(t[k])
+            except (KeyError, TypeError, ValueError):
+                out[k] = None
+        try:
+            out["bars"] = int(float(t["bars"]))
+        except (KeyError, TypeError, ValueError):
+            out["bars"] = None
+        out["open"] = str(t.get("open")).lower() == "true"
+        return out
+
+    def _assemble_doc(self, run_id: str) -> dict[str, Any]:
+        row = self._exp(run_id)
+        d = self.runs_dir / run_id
+        if row["status"] != "ok" or not (d / "metrics.json").is_file():
+            raise MidasError("invalid_request", f"Run {run_id} has status {row['status']}: {row['error'] or 'no report'}.", "Only finished backtests have a report.")
+        doc: dict[str, Any] = {"run_id": run_id, "ref": ArtifactRef("midas", "run", run_id).uri, "spec": json.loads(row["spec"]), "spec_hash": row["spec_hash"],
+                               "generated_at": datetime.fromtimestamp(self.clock(), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        doc.update(json.loads((d / "metrics.json").read_text(encoding="utf-8")))
+        doc["snapshots"] = json.loads((d / "snapshots.json").read_text(encoding="utf-8")) if (d / "snapshots.json").is_file() else []
+        if (d / "trades.csv").is_file():
+            with open(d / "trades.csv", encoding="utf-8", newline="") as fh:
+                doc["trades"] = [self._trade_row(t) for t in csv.DictReader(fh)]
+        if not doc.get("data_health"):  # runs made before the gate existed: computed now, on the same window
+            win = doc.get("window") or {}
+            doc["data_health"] = self.snapshot_health(self._health_ids(doc["spec"]), start=win.get("data_start"), end=win.get("end"))
+        if not doc.get("duplicate"):
+            doc["duplicate"] = self.duplicate_check(doc["spec"], family=row["family"], exclude_id=run_id)
+        # the variants block follows the log as it is now (effective variants include near-duplicates registered since)
+        fam = self.family_stats(row["family"])
+        doc["variants"] = self._variants_doc(fam)
+        doc["validations"] = self._validation_docs(run_id)
+        return doc
+
+    def run_report(self, run_id: str) -> dict[str, Any]:
+        """The lab report contract of a finished backtest (JSON): eight sections, tagged claims and a rule-based decision."""
+        return labreport.build_report(self._assemble_doc(run_id))
+
+    def _report_markdown(self, doc: dict[str, Any]) -> str:
+        return labreport.to_markdown(labreport.build_report(doc), appendix=reports_mod.run_appendix(doc))
+
+    def run_report_text(self, run_id: str, fmt: str = "md") -> str:
+        doc = self._assemble_doc(run_id)
+        rep = labreport.build_report(doc)
+        if fmt == "html":
+            return labreport.to_html(rep, "\n".join(reports_mod.run_appendix(doc)))
+        return labreport.to_markdown(rep, appendix=reports_mod.run_appendix(doc))
+
+    def _refresh_report_file(self, run_id: str) -> None:
+        try:
+            write_text_atomic(self.runs_dir / run_id / "report.md", self.run_report_text(run_id, "md"))
+        except MidasError:
+            pass
+
+    # ------------------------------------------------------------- duplicates
+    def duplicates(self, *, run_id: Optional[str] = None, spec: Optional[dict[str, Any]] = None, strategy: Optional[str] = None,
+                   min_level: str = "medium", limit: int = 20) -> dict[str, Any]:
+        """Duplicate risk of one run, of a spec not yet run, or (with nothing given) of every backtest in the log."""
+        if run_id:
+            row = self._exp(run_id)
+            res = self.duplicate_check(json.loads(row["spec"]), family=row["family"], exclude_id=run_id)
+            return {"run_id": run_id, "family": row["family"], **res}
+        if strategy:
+            spec = self.strategy(strategy)["spec"]
+        if spec is not None:
+            check = self.validate(spec)
+            if not check["ok"]:
+                raise MidasError("invalid_spec", "The strategy spec is not valid: " + check["issues"][0]["message"], check["issues"][0]["hint"], issues=check["issues"])
+            n = check["normalized"]
+            return {"family": n["family"], "hypothetical": True, **self.duplicate_check(n, family=n["family"])}
+        floor = dup.LEVELS.index(min_level)
+        found = []
+        for r in self._variant_rows():
+            res = self.duplicate_check(r["spec"], family=r["family"], exclude_id=r["id"])
+            if dup.LEVELS.index(res["level"]) >= floor:
+                found.append({"experiment": r["id"], "name": r["name"], "family": r["family"], "level": res["level"], "similar": res["similar"][:3]})
+        found.sort(key=lambda x: (-dup.LEVELS.index(x["level"]), x["family"]))
+        return {"min_level": min_level, "experiments": found[:limit], "total": len(found), "compared": len(self._variant_rows()),
+                "method": dup.METHOD,
+                "note": "Risk is by mechanism (indicator kinds, rule leaves, universe) and by description; it never blocks, it is shown in reports and counted in the multiple-testing correction."}
+
+    @staticmethod
+    def _variants_doc(fam: dict[str, Any]) -> dict[str, Any]:
+        return {"family": fam["family"], "tried": fam["variants"], "related": fam["related_variants"], "effective": fam["effective_variants"],
+                "warning_level": fam["warning_level"]}
+
+    @staticmethod
+    def _decision_brief(d: dict[str, Any]) -> dict[str, Any]:
+        return {"decision": d["decision"], "label": d["label"], "because": d["because"], "reasons": [r["text"] for r in d["reasons"][:4]], "needs": d["needs"]}
+
+    def _doc(self, run_id: str, n: dict[str, Any], out: BacktestOutput, fam: dict[str, Any], mt: dict[str, Any], split: Optional[dict[str, Any]],
+             health: Optional[dict[str, Any]] = None, dupres: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         return {"run_id": run_id, "ref": ArtifactRef("midas", "run", run_id).uri, "spec": n, "spec_hash": spec_hash(n), "window": out.window,
-                "metrics": out.metrics, "benchmark": out.benchmark, "variants": {"family": fam["family"], "tried": fam["variants"], "warning_level": fam["warning_level"]},
+                "metrics": out.metrics, "benchmark": out.benchmark, "variants": self._variants_doc(fam), "data_health": health, "duplicate": dupres,
                 "multiple_testing": mt, "holdout": split, "conversions": out.conversions, "warnings": out.warnings,
                 "snapshots": [provenance(self.store.meta(s)) for s in self._snapshot_ids(n)], "trades": out.trades,
                 "generated_at": datetime.fromtimestamp(self.clock(), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
@@ -282,14 +546,14 @@ class Lab:
         d.mkdir(parents=True, exist_ok=True)
         write_json_atomic(d / "spec.json", n, sort_keys=True)
         write_json_atomic(d / "snapshots.json", doc["snapshots"])
-        write_json_atomic(d / "metrics.json", _plain({k: doc[k] for k in ("metrics", "benchmark", "window", "variants", "multiple_testing", "holdout", "conversions", "warnings")}))
+        write_json_atomic(d / "metrics.json", _plain({k: doc[k] for k in ("metrics", "benchmark", "window", "variants", "multiple_testing", "holdout", "conversions", "warnings", "data_health", "duplicate")}))
         out.equity.to_csv(d / "equity.csv", index_label="date", float_format="%.8g")
         with open(d / "trades.csv", "w", encoding="utf-8", newline="") as fh:
             cols = ["asset", "snapshot", "side", "entry_date", "entry_price", "exit_date", "exit_price", "weight", "bars", "return", "gross_return", "open"]
             writer = csv.DictWriter(fh, fieldnames=cols)
             writer.writeheader()
             writer.writerows(out.trades)
-        write_text_atomic(d / "report.md", reports_mod.run_markdown(doc))
+        write_text_atomic(d / "report.md", self._report_markdown({**doc, "validations": []}))
         return d
 
     # ------------------------------------------------------------- read run
@@ -323,6 +587,14 @@ class Lab:
         out["snapshots"] = json.loads((d / "snapshots.json").read_text(encoding="utf-8"))
         out["validations"] = [{"id": r["id"], "created_at": r["created_ts"], "status": r["status"], "summary": json.loads(r["summary"] or "{}")}
                               for r in self.db.query("SELECT * FROM experiments WHERE parent_id = ? AND kind IN ('validation','holdout') ORDER BY created_ts DESC", (run_id,))]
+        try:
+            rep = self.run_report(run_id)
+            out["decision"] = self._decision_brief(rep["decision"])
+            out["evidence_quality"] = rep["evidence_quality"]
+            out["data_health"] = out.get("data_health") or rep["data_health"]
+            out["duplicate"] = rep["duplicate"]
+        except MidasError:
+            pass
         out["disclaimer"] = reports_mod.DISCLAIMER
         return out
 
@@ -362,7 +634,7 @@ class Lab:
                     results[m] = {"error": error.message, "code": error.code, "hint": error.hint}
             if "multiple_testing" in methods:
                 fam = self.family_stats(spec["family"])
-                results["multiple_testing"] = val.multiple_testing(base.metrics.get("sharpe_per_period"), base.metrics["bars"], fam["trial_sharpes"], fam["variants"],
+                results["multiple_testing"] = val.multiple_testing(base.metrics.get("sharpe_per_period"), base.metrics["bars"], fam["trial_sharpes"], fam["effective_variants"],
                                                                    skew=base.metrics.get("skew"), kurt=base.metrics.get("kurtosis"), ppy=base.universe.ppy, family=spec["family"])
             holdout_info: dict[str, Any]
             if reveal_holdout:
@@ -391,8 +663,12 @@ class Lab:
                     "holdout": results["holdout"].get("status")}
         self._log(exp_id=vid, kind="validation", spec=spec, status="ok", summary=headline, parent=run_id, as_of=cutoff, n_obs=base.metrics["bars"])
         doc = {"validation_id": vid, "run_id": run_id, "as_of": cutoff, "seed": seed, "results": results,
-               "variants": {"family": spec["family"], "tried": self.family_stats(spec["family"])["variants"]}, "disclaimer": reports_mod.DISCLAIMER}
+               "variants": {"family": spec["family"], "tried": self.family_stats(spec["family"])["variants"], "effective": self.family_stats(spec["family"])["effective_variants"]},
+               "disclaimer": reports_mod.DISCLAIMER}
         d = self.runs_dir / run_id
         d.mkdir(parents=True, exist_ok=True)
         write_json_atomic(d / f"validation-{vid}.json", _plain(doc))
+        self._refresh_report_file(run_id)
+        brief = self._decision_brief(self.run_report(run_id)["decision"])
+        doc["decision"] = brief
         return doc

@@ -67,10 +67,27 @@ class Services:
             self.link_sync = self._link.sync
         self.model_probe = ModelProbe(lambda: self.link_sync.status())
         self.theses = Theses(self.db, self.store, fetch=self._fetch_for_thesis, catalogue=self.catalogue_lookup, emit=self._emit, clock=clock_fn)
-        self.lab = Lab(self.db, self.store, config.runs_dir, emit=self._emit, clock=clock_fn)
+        self._embed_cache: dict[str, list[float]] = {}
+        # description similarity of experiments: embeddings from Hoard Link when the hub and Borges are up, else lexical (TF-IDF); never in tests
+        self.lab = Lab(self.db, self.store, config.runs_dir, emit=self._emit, clock=clock_fn, embedder=self._family_embedder if (link is None and not offline) else None)
         self.committee = Committee(self.db, self.theses, self.store, self.link_sync, clock_fn, model_gate=self.model_probe.llm_block)
         self.portfolios = Portfolios(self.db, self.store, clock_fn)
         self.seed_symbols()
+
+    def _family_embedder(self, texts: list[str]) -> list[list[float]]:
+        """Vectors for short texts through the family embedder (cached per text); raises when it is not available, so the caller falls back."""
+        from .hoard_link import fam_embed
+        missing = [t for t in dict.fromkeys(texts) if t not in self._embed_cache]
+        if missing:
+            if not fam_embed.available(0.3):
+                raise RuntimeError("the family embedder is not available")
+            got = fam_embed.embed_texts(missing, kind="document", local_fallback=False, timeout_s=8.0)
+            if not got.get("ok"):
+                raise RuntimeError(str(got.get("error")))
+            if len(self._embed_cache) > 4000:
+                self._embed_cache.clear()
+            self._embed_cache.update(zip(missing, got["vectors"]))
+        return [self._embed_cache[t] for t in texts]
 
     # ------------------------------------------------------------ secrets
     def _provider_key(self, provider_id: str) -> str:
@@ -267,15 +284,19 @@ class Services:
             run = self.lab.run_get(ident, equity_limit=10_000, trades_limit=10_000)
             if run["status"] != "ok":
                 raise MidasError("invalid_request", f"Run {ident} has status {run['status']}: {run.get('error') or 'no report'}.", "Only finished backtests have a report.")
-            report = self.lab.runs_dir / ident / "report.md"
-            markdown = report.read_text(encoding="utf-8") if report.is_file() else ""
+            markdown = self.lab.run_report_text(ident, "md")
+            run["report"] = self.lab.run_report(ident)
             data = run
+            if fmt == "html":
+                markdown = self.lab.run_report_text(ident, "html")
         elif kind == "portfolio":
             analysis = self.portfolios.analyze(ident)
             markdown = reports_mod.portfolio_markdown(analysis)
             data = analysis
         else:
             raise MidasError("invalid_request", f"Unknown report kind '{kind}'.", "Use thesis, run or portfolio.")
+        if fmt == "html" and kind != "run":
+            raise MidasError("invalid_request", "HTML is available for run reports only.", "Use format md or json for theses and portfolios.")
         path = None
         if save:
             self.config.reports_dir.mkdir(parents=True, exist_ok=True)
@@ -284,7 +305,7 @@ class Services:
                 path = base.with_suffix(".json")
                 write_json_atomic(path, json.loads(json.dumps(data, default=str)))
             else:
-                path = base.with_suffix(".md")
+                path = base.with_suffix(".html" if fmt == "html" else ".md")
                 write_text_atomic(path, markdown)
         return {"kind": kind, "id": ident, "format": fmt, "markdown": markdown, "json": data if fmt == "json" else None, "path": str(path) if path else None,
                 "generated_at": reports_mod.now_iso(), "disclaimer": DISCLAIMER}

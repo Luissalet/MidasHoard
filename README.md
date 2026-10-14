@@ -11,7 +11,36 @@ A local market-research lab for one person. It freezes market data into snapshot
 - **Lab** - declarative strategy specs (JSON, no code). A signal on bar t only affects the position earning bar t+1 (a test proves it). Costs, sizing, rebalancing, long/short, benchmark, sealed holdout, anchored walk-forward with an optional parameter grid, block-permutation test, block-bootstrap Sharpe interval, Bonferroni haircut and deflated Sharpe. Every variant is logged, failures included, with a multiple-testing warning.
 - **Committee** - two advocates, an independent risk reviewer and an arbiter over a fixed evidence pack. Citations are validated and every number goes through the number ledger (observed, derived, cited, proposed or unmatched). Without a model it returns the evidence pack and deterministic metrics.
 - **Portfolio** - holdings from a table or CSV, valuation at a date, allocation, currency exposure, concentration, volatility, drawdown, correlation, with every FX conversion recorded.
-- **Reports** - Markdown or JSON for a thesis, a run or a portfolio, with provenance for every number.
+- **Reports** - Markdown or JSON for a thesis, a run or a portfolio, with provenance for every number. A run's report follows the lab report contract (below) and also exports as HTML.
+- **Data health** - nulls, zeros, coverage by date, 3-sigma outliers and long gaps per series, computed before any metric is read.
+- **Duplicates** - the same idea under another name is found by mechanism, not only by spec hash, and counts as a trial.
+
+## Lab report contract
+
+The report of a backtest (`report_export` with `kind: "run"`, `GET /api/lab/backtests/{run_id}/report`, the Lab screen) always has the same eight sections, in this order:
+
+1. **Identity and scope** - strategy, universe, window, which part is in-sample and which out-of-sample (sealed or opened holdout; walk-forward windows), and a rule-based evidence-quality label.
+2. **Summary**.
+3. **Health gates** - data health, sample size, permutation, walk-forward, bootstrap, multiple testing, holdout and duplicate risk, each `pass`, `warn`, `fail` or `not_run`.
+4. **Metrics** - one table per window (development, walk-forward out-of-sample, opened holdout); windows are never mixed in a table.
+5. **Mechanism with alternatives**.
+6. **Risks and evidence gaps**.
+7. **Next experiments**, prioritised.
+8. **Decision**: `reject`, `investigate`, `review` or `adopt`, with the reasons.
+
+Every statement carries a tag: **Observed** (read from, or computed on, the stored artifacts), **Inference**, **Alternative** or **Experiment**. In JSON each claim has `kind`; in Markdown the tag is bold (`**[Observed]**`); in HTML and in the UI it is a coloured label. The committee's arguments, risks and reasons carry `kind: "inference"`.
+
+The decision is computed by fixed rules from the validations that exist (walk-forward windows that were positive, permutation p-value, bootstrap interval, multiple-testing correction, holdout), the data health and the variants tried, including near-duplicates under other names. A model never writes or changes it. Missing evidence only lowers it: without validations, with a failing data-health gate or coverage under 90 %, with too few bars or trades, or with a window under a year, the most it can be is `investigate`; `adopt` also needs an opened holdout that held up and no high duplicate risk. A negative net Sharpe over at least 120 bars, a walk-forward with no positive window, or a failed holdout gives `reject`. The thresholds are returned with the decision.
+
+Rules against invented metrics, enforced in code: a null stays null and reads `no data` (never 0); each table states its window; there is no composite score (the evidence-quality grade labels how much was tested and is not a verdict); the report states its conventions: drawdown is a negative fraction of the previous peak, and turnover is the sum of |change in weight| per year, not halved.
+
+### Data health
+
+`data_health` (tool, `GET /api/lab/data-health`) measures, per series and window: share of null price cells, share of exact zeros, coverage (valid dates over expected dates), returns beyond 3 standard deviations and long gaps. It runs on the raw frozen series before any metric, is stored with each run and shows as a gate in the report. The thresholds used travel with the result. A missing close is never filled; the backtest warns where it had to treat one as no move.
+
+### Duplicates
+
+At registration each experiment is compared with those of other families: Jaccard overlap of the indicator kinds, of the rule leaves (indicators compared by kind, so renaming `fast` to `ma_short` changes nothing) and of the universe symbols, plus the similarity of name and note (embeddings through Hoard Link when available, otherwise TF-IDF). `duplicate_risk` is `low`, `medium` or `high` with the similar experiments and why. It never blocks. Variants of another family at high mechanism overlap count in `effective_variants`, which drives the warning level and the multiple-testing correction (`experiments_duplicates`, `GET /api/lab/duplicates`).
 
 ## Data providers
 
@@ -54,7 +83,7 @@ Once the shared Hoard Link launcher is installed, the app shows the family's Fau
 
 ## Assistant tools (MCP)
 
-`mcp_server.py` is the shared Hoard Link stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 27 tools:
+`mcp_server.py` is the shared Hoard Link stdio bridge. It never opens the database: it proxies every call to `POST /api/agent/call` with the token in `data/mcp-token`, reads the tool list from `GET /api/agent/tools`, and starts the app if nothing answers (`MIDAS_BRIDGE_AUTOSTART=0` disables that). Variables: `MIDAS_URL`, `MIDAS_TOKEN_FILE`, `MIDAS_DATA_DIR`. Errors keep their `code` and `hint`. Deletes need `confirm: true` on the owning tool. The 29 tools:
 
 ### Market data
 
@@ -90,6 +119,8 @@ Once the shared Hoard Link launcher is installed, the app shows the family's Fau
 | `backtest_run` | Backtest a strategy: metrics, equity, trades, benchmark, variants tried |
 | `backtest_validate` | Stress a backtest: walk-forward, permutation test, bootstrap Sharpe CI, multiple testing |
 | `experiments_list` | List every backtest variant ever run, failures included, or one run in detail |
+| `data_health` | Data health of series: % nulls, % zeros, coverage by date, 3-sigma outliers, long gaps |
+| `experiments_duplicates` | Find the same idea under another name: shared indicators, rules, universe, description |
 
 ### Portfolio and reports
 
@@ -105,7 +136,7 @@ Full reference: [docs/API.md](docs/API.md).
 
 - Snapshots are immutable and verified by hash on load; identical bytes reuse the snapshot.
 - `as_of` makes analyses point-in-time for the data you hold. FRED and some other providers publish revised values, so revisions can still leak into past dates; this is stated in each snapshot.
-- Variant counts are per strategy family (distinct spec hashes). The deflated Sharpe needs at least 3 variants.
+- Variant counts are per strategy family (distinct spec hashes) plus the variants of other families that are the same idea (high mechanism overlap). The deflated Sharpe needs at least 3 variants.
 - Backtests are daily-bar simulations with proportional costs: no intraday fills, no liquidity model, no taxes, no survivorship correction for delisted names.
 - The committee can only be as good as the evidence you give it; unmatched numbers are flagged, not removed.
 - CoinGecko history is limited to 365 days on the free tier.

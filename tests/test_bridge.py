@@ -64,7 +64,7 @@ def test_bridge_roundtrip(server):
         proc.stdin.write((json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n").encode())
         proc.stdin.flush()
         tools = rpc(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})["result"]["tools"]
-        assert len(tools) == 27 and {"market_fetch", "backtest_run"} <= {t["name"] for t in tools}
+        assert len(tools) == 29 and {"market_fetch", "backtest_run"} <= {t["name"] for t in tools}
         ok = rpc(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "market_fetch", "arguments": {"provider": "fake", "symbol": "fake.up"}}})
         body = json.loads(ok["result"]["content"][0]["text"])
         assert body["snapshot"]["rows"] > 1000

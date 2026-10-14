@@ -41,6 +41,29 @@ def terms_block(snaps: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def run_appendix(d: dict[str, Any], level: str = "###") -> list[str]:
+    """Holdout note, spec, currency conversions, provenance, warnings, trades and limits of a run (shared by both report layouts)."""
+    lines: list[str] = []
+    if d.get("holdout"):
+        h = d["holdout"]
+        lines += [f"{level} Holdout", "", f"Sealed when this run was made. This run used data up to {h['dev_end']}; {h['holdout_bars']} bars from {h['holdout_start']} to {h['holdout_end']} were not used. "
+                  "Open it with backtest_validate(reveal_holdout=true) once the spec is final.", ""]
+    lines += [f"{level} Spec", "", "```json", __import__("json").dumps(d["spec"], indent=2, sort_keys=True), "```", ""]
+    if d.get("conversions"):
+        lines += [f"{level} Currency conversions", "", _table(["asset", "from", "to", "pair", "direction", "fx snapshot", "max rate staleness (days)"],
+                                                        [[k, c["from"], c["to"], c["pair"], c["direction"], c["fx_snapshot"], c.get("max_rate_staleness_days")] for k, c in d["conversions"].items()]), ""]
+    lines += [f"{level} Data provenance", "", provenance_table(d["snapshots"]), "", "Provider terms:", terms_block(d["snapshots"]), ""]
+    if d.get("warnings"):
+        lines += [f"{level} Warnings", ""] + [f"- {x}" for x in d["warnings"]] + [""]
+    trades = d.get("trades") or []
+    if trades:
+        lines += [f"{level} Trades (first 20)", "", _table(["asset", "side", "entry", "exit", "return", "bars"],
+                                                      [[t["asset"], t["side"], f"{t['entry_date']} @ {num(t['entry_price'])}", f"{t['exit_date']} @ {num(t['exit_price'])}" + (" (open)" if t["open"] else ""),
+                                                        pct(t["return"]), t["bars"]] for t in trades[:20]]), ""]
+    lines += [f"{level} Limits", "", LIMITS, ""]
+    return lines
+
+
 def run_markdown(d: dict[str, Any]) -> str:
     m, b, w, spec = d["metrics"], d["benchmark"], d["window"], d["spec"]
     v, mt = d["variants"], d.get("multiple_testing") or {}
@@ -68,23 +91,7 @@ def run_markdown(d: dict[str, Any]) -> str:
         if dsr:
             lines.append(f"- Deflated Sharpe probability: {pct(dsr['probability'], 1)} (expected best of {dsr['trials']} trials: Sharpe {num(dsr['expected_max_sharpe_annualised'])})")
     lines += ["", "Methods: " + "; ".join(mt.get("methods", [])), ""]
-    if d.get("holdout"):
-        h = d["holdout"]
-        lines += ["## Holdout", "", f"Sealed. This run used data up to {h['dev_end']}; {h['holdout_bars']} bars from {h['holdout_start']} to {h['holdout_end']} were not used. "
-                  "Open it with backtest_validate(reveal_holdout=true) once the spec is final.", ""]
-    lines += ["## Spec", "", "```json", __import__("json").dumps(spec, indent=2, sort_keys=True), "```", ""]
-    if d.get("conversions"):
-        lines += ["## Currency conversions", "", _table(["asset", "from", "to", "pair", "direction", "fx snapshot", "max rate staleness (days)"],
-                                                        [[k, c["from"], c["to"], c["pair"], c["direction"], c["fx_snapshot"], c.get("max_rate_staleness_days")] for k, c in d["conversions"].items()]), ""]
-    lines += ["## Data provenance", "", provenance_table(d["snapshots"]), "", "Provider terms:", terms_block(d["snapshots"]), ""]
-    if d.get("warnings"):
-        lines += ["## Warnings", ""] + [f"- {x}" for x in d["warnings"]] + [""]
-    trades = d.get("trades") or []
-    if trades:
-        lines += ["## Trades (first 20)", "", _table(["asset", "side", "entry", "exit", "return", "bars"],
-                                                      [[t["asset"], t["side"], f"{t['entry_date']} @ {num(t['entry_price'])}", f"{t['exit_date']} @ {num(t['exit_price'])}" + (" (open)" if t["open"] else ""),
-                                                        pct(t["return"]), t["bars"]] for t in trades[:20]]), ""]
-    lines += ["## Limits", "", LIMITS, ""]
+    lines += run_appendix(d, "##")
     return "\n".join(lines)
 
 
@@ -135,11 +142,11 @@ def thesis_markdown(t: dict[str, Any], *, pack: Optional[dict[str, Any]] = None,
         if committee["mode"] == "model":
             lines += [f"Verdict: **{committee['verdict']}** (confidence {committee['confidence']}/100) — {committee['method']}", ""]
             for title, key in (("Advocate for", "advocate_for"), ("Advocate against", "advocate_against"), ("Risk review", "risk_review")):
-                lines += [f"### {title}", ""] + [f"- {i['text']} {('[' + ', '.join(i['evidence']) + ']') if i['evidence'] else '(uncited)'}" for i in committee.get(key, [])] + [""]
+                lines += [f"### {title}", ""] + [f"- **[Inference]** {i['text']} {('[' + ', '.join(i['evidence']) + ']') if i['evidence'] else '(uncited)'}" for i in committee.get(key, [])] + [""]
             arb = committee["arbiter"]
-            lines += ["### Arbiter", ""] + [f"- {i['text']} [{', '.join(i['evidence'])}]" for i in arb["reasons"]]
+            lines += ["### Arbiter", ""] + [f"- **[Inference]** {i['text']} [{', '.join(i['evidence'])}]" for i in arb["reasons"]]
             if arb["missing_evidence"]:
-                lines += ["", "Missing evidence: " + "; ".join(arb["missing_evidence"])]
+                lines += ["", "**[Experiment]** Missing evidence: " + "; ".join(arb["missing_evidence"])]
             led = committee["ledger"]
             lines += ["", f"Number ledger: {'all numbers accounted for' if led['ok'] else str(len(led['unmatched'])) + ' unmatched number(s): ' + ', '.join(u['section'] + ' ' + u['text'] for u in led['unmatched'])}."]
         else:

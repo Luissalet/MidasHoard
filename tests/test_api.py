@@ -17,7 +17,7 @@ def test_status(client):
 
 def test_agent_tools_endpoint(client):
     body = client.get("/api/agent/tools").json()
-    assert body["instructions"] and len(body["tools"]) == 27
+    assert body["instructions"] and len(body["tools"]) == 29
 
 
 def test_agent_call_requires_token(client):
@@ -180,3 +180,26 @@ def test_portfolio_get_returns_holdings(client):
     got = client.get("/api/portfolios/p").json()
     assert got["name"] == "p" and got["currency"] == "USD" and got["holdings"][0]["quantity"] == 2
     assert client.get("/api/portfolios/none").status_code == 404
+
+
+def test_report_contract_health_and_duplicates_over_http(client):
+    sid = client.post("/api/market/fetch", json={"provider": "fake", "symbol": "fake.up"}).json()["snapshot"]["id"]
+    spec = copy.deepcopy(EXAMPLE_SPEC)
+    spec["universe"] = [sid]
+    run = client.post("/api/lab/backtests", json={"spec": spec, "holdout_fraction": 0.2}).json()
+    rid = run["run_id"]
+    assert run["decision"]["decision"] == "investigate" and run["data_health"]["summary"]["status"] in ("pass", "warn") and run["duplicate"]["level"] == "low"
+    rep = client.get(f"/api/lab/backtests/{rid}/report").json()
+    assert [s["id"] for s in rep["sections"]] == ["identity", "summary", "gates", "metrics", "mechanism", "risks", "next", "decision"]
+    md = client.get(f"/api/lab/backtests/{rid}/report", params={"format": "md"}).json()
+    assert md["format"] == "md" and "**[Observed]**" in md["text"]
+    html = client.get(f"/api/lab/backtests/{rid}/report", params={"format": "html"}).json()
+    assert "kind-observed" in html["text"]
+    health = client.get("/api/lab/data-health", params={"snapshot_ids": sid}).json()
+    assert health["series"][0]["gates"]["coverage_ratio"]["threshold"]["fail_below"] == 0.9
+    assert client.get("/api/lab/data-health", params={"run_id": rid}).json()["run_id"] == rid
+    assert client.get("/api/lab/data-health").status_code == 400
+    assert client.get("/api/lab/duplicates", params={"run_id": rid}).json()["level"] == "low"
+    assert client.post("/api/lab/duplicates", json={"spec": spec}).json()["hypothetical"] is True
+    assert client.get("/api/lab/duplicates").json()["total"] == 0
+    assert client.get("/api/lab/experiments").json()["experiments"][0]["duplicate_risk"] in ("low", None)
