@@ -383,6 +383,10 @@ def run_backtest(spec: dict[str, Any], load: Callable[[str], Snapshot], *, as_of
     bsnap = load(bench_id)
     bdf = bsnap.df if not as_of else bsnap.df[bsnap.df.index <= pd.Timestamp(as_of)]
     warn = list(uni.warnings)
+    for sid, label in zip(uni.ids, uni.labels):  # a missing close is not a price: say where the simulation had to treat it as "no move"
+        nulls = int(uni.frames[sid]["close"].isna().sum())
+        if nulls:
+            warn.append(f"{label} has {nulls} null close(s) on the common dates: the bars around them earn no return in the simulation (prices are not filled in). See data_health.")
     bmeta = dict(bsnap.meta)
     if spec.get("currency") and (bmeta["currency"] or "").upper() not in ("", spec["currency"]):
         fx_id = (spec.get("fx") or {}).get(bench_id)
@@ -403,7 +407,7 @@ def run_backtest(spec: dict[str, Any], load: Callable[[str], Snapshot], *, as_of
         with np.errstate(invalid="ignore", divide="ignore"):  # a flat series has no correlation
             corr = _f(aligned.iloc[:, 0].corr(aligned.iloc[:, 1]))
     bench = {"snapshot": bench_id, "symbol": bmeta["symbol"], **{k: bench_metrics[k] for k in ("total_return", "cagr", "ann_vol", "sharpe", "max_drawdown")},
-             "excess_total_return": _f((metrics["total_return"] or 0.0) - (bench_metrics["total_return"] or 0.0)), "beta": beta, "correlation": corr}
+             "excess_total_return": (_f(metrics["total_return"] - bench_metrics["total_return"]) if metrics["total_return"] is not None and bench_metrics["total_return"] is not None else None), "beta": beta, "correlation": corr}
     eq = pd.DataFrame({"equity": equity, "drawdown": dd.reindex(equity.index), "exposure": exposure, "benchmark_equity": bench_equity})
     window = {"start": index[0].strftime("%Y-%m-%d"), "end": index[-1].strftime("%Y-%m-%d"), "bars": int(len(index)),
               "as_of": as_of, "eval_start": eval_start, "data_start": uni.index[0].strftime("%Y-%m-%d")}

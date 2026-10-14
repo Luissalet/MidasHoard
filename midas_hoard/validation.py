@@ -215,7 +215,7 @@ def walk_forward(spec: dict[str, Any], load: Callable[[str], Snapshot], *, as_of
     stitched = pd.concat(oos_parts)
     stitched = stitched[~stitched.index.duplicated(keep="first")]
     m, _, _ = perf_metrics(stitched, base.universe.ppy, pd.Series(0.0, index=stitched.index), spec["initial_capital"])
-    positive = sum(1 for r in rows if (r["oos_total_return"] or 0) > 0)
+    positive = sum(1 for r in rows if r["oos_total_return"] is not None and r["oos_total_return"] > 0)  # a window with no value is not a positive one, nor a zero
     oos_sh = [r["oos_sharpe"] for r in rows if r["oos_sharpe"] is not None]
     is_sh = [r["in_sample_sharpe"] for r in rows if r["in_sample_sharpe"] is not None]
     return {
